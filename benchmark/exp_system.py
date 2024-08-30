@@ -69,6 +69,5 @@ class ExpSystem:
         run_cmd('sudo -E make -j16 install')
         run_cmd('sudo ldconfig')
         os.chdir(current_dir)
-        run_cmd('git checkout -- .')
         run_cmd('make clean')
         run_cmd('make')
