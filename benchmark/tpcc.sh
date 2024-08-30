@@ -8,10 +8,10 @@ OUTPUT_DIR=../tpcc_results
 
 DEV=/dev/nvme0n1
 
-NRUNS=1
+NRUNS=3
 
 CACHE_SIZE=256
-RUN_SEC=240
+RUN_SEC=60
 
 mkdir -p $LOG_DIR
 
