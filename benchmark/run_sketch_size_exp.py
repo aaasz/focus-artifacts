@@ -109,6 +109,10 @@ def run(system, workload, num_threads):
         src_file = "transaction_sto.h"
     elif system == "mvcc":
         src_file = "transaction_mvcc_sketch.h"
+        
+    cache_size = 6144
+    if workload == "read_intensive_67M":
+        cache_size = 614
 
     max_size = 8 * 1024 * 1024
     rowsxcols = max_size // (128 // 8)
@@ -134,7 +138,7 @@ def run(system, workload, num_threads):
                     -L workloads/{workload}.spec \
                     -W workloads/{workload}.spec \
                     -p splinterdb.filename {dev_name} \
-                    -p splinterdb.cache_size_mb 6144 \
+                    -p splinterdb.cache_size_mb {cache_size} \
                     -p splinterdb.disable_upsert 1 \
                     -p splinterdb.io_contexts_per_process 64 \
                     -p splinterdb.disk_size_gb {get_device_size_bytes(dev_name) // (1024**3)} \
