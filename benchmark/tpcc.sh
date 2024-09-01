@@ -1,7 +1,7 @@
 #!/usr/bin/bash -x
 
 SYSTEMS=(2pl-no-wait occ-serial sto-disk sto-memory sto-counter sto-sketch tictoc-disk tictoc-memory tictoc-counter tictoc-sketch mvcc-memory mvcc-sketch mvcc-counter mvcc-disk)
-WORKLOADS=(tpcc-wh4 tpcc-wh8 tpcc-wh16 tpcc-wh32 tpcc-wh4-upserts tpcc-wh8-upserts tpcc-wh16-upserts tpcc-wh32-upserts)
+WORKLOADS=(tpcc-wh4 tpcc-wh8 tpcc-wh16 tpcc-wh32)
 
 LOG_DIR=../tpcc_logs
 OUTPUT_DIR=../tpcc_results
