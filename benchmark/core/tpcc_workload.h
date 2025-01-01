@@ -226,6 +226,7 @@ private:
    struct thread_args {
       TPCCWorkload *wl;
       uint32_t      tid;
+      uint32_t     *shared_wh_num;
    };
    ycsbc::TransactionalSplinterDB *_db;
 

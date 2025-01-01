@@ -5,8 +5,9 @@
 #include "util.h"
 #include "experimental_mode.h"
 #include "splinterdb_internal.h"
-#include "isketch/iceberg_table.h"
+#include "FPSketch/iceberg_table.h"
 #include "transaction_stats.h"
+#include <math.h>
 #include "poison.h"
 
 typedef struct {
@@ -612,7 +613,6 @@ transactional_splinterdb_config_init(
       (data_config *)&txn_splinterdb_cfg->txn_data_cfg;
 
    iceberg_config_default_init(&txn_splinterdb_cfg->iceberght_config);
-   txn_splinterdb_cfg->iceberght_config.log_slots = 29;
    txn_splinterdb_cfg->iceberght_config.merge_value_from_sketch =
       &sketch_merge_timestamps_to_cache;
    txn_splinterdb_cfg->iceberght_config.transform_sketch_value =
@@ -627,15 +627,29 @@ transactional_splinterdb_config_init(
    sketch_config_default_init(&txn_splinterdb_cfg->sktch_config);
    txn_splinterdb_cfg->sktch_config.insert_value_fn = &sketch_insert_timestamps;
    txn_splinterdb_cfg->sktch_config.get_value_fn    = &sketch_get_timestamps;
+
+   txn_splinterdb_cfg->iceberght_config.max_num_keys = 1000;
 #if EXPERIMENTAL_MODE_MVCC_COUNTER
    txn_splinterdb_cfg->sktch_config.rows = 1;
    txn_splinterdb_cfg->sktch_config.cols = 1;
+#elif EXPERIMENTAL_MODE_MVCC_COUNTER_LAZY
+   txn_splinterdb_cfg->iceberght_config.max_num_keys += 820;
+   txn_splinterdb_cfg->sktch_config.rows                     = 1;
+   txn_splinterdb_cfg->sktch_config.cols                     = 1;
+   txn_splinterdb_cfg->iceberght_config.enable_lazy_eviction = TRUE;
 #elif EXPERIMENTAL_MODE_MVCC_SKETCH
    txn_splinterdb_cfg->sktch_config.rows = 2;
-   txn_splinterdb_cfg->sktch_config.cols = 131072;
+   txn_splinterdb_cfg->sktch_config.cols = 1024; // 131072;
+#elif EXPERIMENTAL_MODE_MVCC_SKETCH_LAZY
+   txn_splinterdb_cfg->iceberght_config.max_num_keys += 410;
+   txn_splinterdb_cfg->sktch_config.rows                     = 2;
+   txn_splinterdb_cfg->sktch_config.cols                     = 512; // 131072;
+   txn_splinterdb_cfg->iceberght_config.enable_lazy_eviction = TRUE;
 #else
 #   error "Invalid experimental mode"
 #endif
+   txn_splinterdb_cfg->iceberght_config.log_slots = (int)ceil(
+      log2(5 * (double)txn_splinterdb_cfg->iceberght_config.max_num_keys));
 }
 
 // static void

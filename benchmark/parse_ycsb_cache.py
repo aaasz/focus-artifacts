@@ -109,25 +109,31 @@ def generateOutputFile(input, output=sys.stdout):
     lines[0] = df.index.name + '\t' + lines[0].lstrip()
     del lines[1]
     print('\n'.join(lines), file=output)
-    
-    
+
+
 input_dir = sys.argv[1]
 output_dir = sys.argv[2]
 output_filenames = {
     '2pl-no-wait': '2PL',
-    'occ-serial': 'OCC',
+    'occ-serial': 'KR-OCC',
     'sto-disk': 'STO-Disk',
     'sto-memory': 'STO-Memory',
+    'sto-counter': 'STO-Counter',
     'sto-sketch': 'STO-FPSketch',
-    'sto-counter-lazy': 'STO-Counter',
+    'sto-sketch-lazy': 'STO-FPSketch-Lazy',
+    'sto-counter-lazy': 'STO-Counter-Lazy',
     'tictoc-disk': 'TicToc-Disk',
     'tictoc-memory': 'TicToc-Memory',
+    'tictoc-counter': 'TicToc-Counter',
     'tictoc-sketch': 'TicToc-FPSketch',
-    'tictoc-counter-lazy': 'TicToc-Counter',
+    'tictoc-sketch-lazy': 'TicToc-FPSketch-Lazy',
+    'tictoc-counter-lazy': 'TicToc-Counter-Lazy',
     'mvcc-memory': 'MVTO-Memory',
     'mvcc-sketch': 'MVTO-FPSketch',
+    'mvcc-sketch-lazy': 'MVTO-FPSketch-lazy',
+    'mvcc-counter': 'MVTO-Counter',
     'mvcc-disk': 'MVTO-Disk',
-    'mvcc-counter-lazy': 'MVTO-Counter',
+    'mvcc-counter-lazy': 'MVTO-Counter-Lazy',
 }
 
 os.makedirs(output_dir, exist_ok=True)
@@ -137,21 +143,23 @@ for system in output_filenames.keys():
     for workload in ['write_intensive', 'read_intensive', 'write_intensive_medium', 'read_intensive_medium',
                      'mixed', 'mixed_medium', 'long_txn',
                      'tpcc-wh4', 'tpcc-wh8', 'tpcc-wh16', 'tpcc-wh32', 'tpcc-wh60', 'tpcc-wh1000']:
-        input_file_paths = []
-        for thr in [1, 2] + list(range(4, 64, 4)):
-            for run in range(1, 4):
-                if os.path.exists(f'{input_dir}/{system}_{workload}_{thr}_{run}.log'):
-                    input_file_paths.append(f'{input_dir}/{system}_{workload}_{thr}_{run}.log')
-        if not input_file_paths:
-            continue
+        for cache in range(6, 56 ,6):
+            input_file_paths = []
+            for thr in [1, 2] + list(range(4, 64, 4)):
+                for run in range(1, 4):
+                    input_file = f'{input_dir}/{system}_{workload}_{thr}_{cache}GB_{run}.log'
+                    if os.path.exists(input_file):
+                        input_file_paths.append(input_file)
+            if not input_file_paths:
+                continue
 
-        output_file_path = f'{output_dir}/{system}-{workload}.csv'  # Replace with the path to your output CSV file
+            output_file_path = f'{output_dir}/{system}-{workload}-{cache}GB.csv'  # Replace with the path to your output CSV file
 
-        results = [parse_input_file(file_path) for file_path in input_file_paths]
-        write_to_csv(results, output_file_path)
-        
-        os.makedirs(f'{output_dir}/{workload}', exist_ok=True)
+            results = [parse_input_file(file_path) for file_path in input_file_paths]
+            write_to_csv(results, output_file_path)
 
-        with open(f'{output_dir}/{workload}/{output_filenames[system]}', 'w') as out:
-            generateOutputFile(output_file_path, out)
+            os.makedirs(f'{output_dir}/{workload}', exist_ok=True)
+
+            with open(f'{output_dir}/{workload}/{output_filenames[system]}-{cache}GB', 'w') as out:
+                generateOutputFile(output_file_path, out)
 

@@ -1,5 +1,4 @@
-#ifndef _POTC_TABLE_H_
-#define _POTC_TABLE_H_
+#pragma once
 
 #include "lock.h"
 #include "types.h"
@@ -43,6 +42,11 @@ typedef struct iceberg_lv3_list {
    iceberg_lv3_node *head;
 } iceberg_lv3_list;
 
+typedef struct iceberg_stats {
+   _Atomic uint64_t cache_misses;
+   _Atomic uint64_t cache_hits;
+} iceberg_stats;
+
 typedef struct iceberg_metadata {
    uint64_t              total_size_in_bytes;
    uint64_t              nblocks;
@@ -61,6 +65,7 @@ typedef struct iceberg_metadata {
    uint64_t             *lv3_sizes[MAX_RESIZES];
    uint8_t              *lv3_locks[MAX_RESIZES];
    uint64_t              nblocks_parts[MAX_RESIZES];
+   iceberg_stats         stats;
 #ifdef ENABLE_RESIZE
    volatile int lock;
    uint64_t     resize_cnt;
@@ -84,6 +89,8 @@ typedef struct iceberg_config {
    merge_value_from_sketch_fn *merge_value_from_sketch;
    transform_sketch_value_fn  *transform_sketch_value;
    post_remove_fn             *post_remove;
+   bool                        enable_lazy_eviction;
+   uint64_t                    max_num_keys;
 } iceberg_config;
 
 void
@@ -98,6 +105,7 @@ typedef struct iceberg_table {
    iceberg_config     config;
    const data_config *spl_data_config;
    sketch            *sktch;
+   uint64_t           clock_hand; // iterate table block by block
 } iceberg_table;
 
 uint64_t
@@ -219,6 +227,11 @@ bool
 iceberg_force_remove(iceberg_table *table, slice key, threadid thread_id);
 
 bool
+iceberg_force_remove_if_inactive(iceberg_table *table,
+                                 slice          key,
+                                 threadid       thread_id);
+
+bool
 iceberg_decrease_refcount(iceberg_table *table, slice key, threadid thread_id);
 
 bool
@@ -238,5 +251,3 @@ iceberg_print_state(iceberg_table *table);
 #ifdef __cplusplus
 }
 #endif
-
-#endif // _POTC_TABLE_H_

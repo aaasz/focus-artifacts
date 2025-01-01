@@ -152,6 +152,15 @@ public:
    static const std::string MAX_TXN_COUNT_PROPERTY;
    static const std::string MAX_TXN_COUNT_DEFAULT;
 
+   static const std::string LONG_TXN_RATIO;
+   static const std::string LONG_TXN_RATIO_DEFAULT;
+
+   static const std::string LONG_TXN_READ_RATIO;
+   static const std::string LONG_TXN_READ_RATIO_DEFAULT;
+
+   static const std::string MAX_ROW_PER_TXN;
+   static const std::string MAX_ROW_PER_TXN_DEFAULT;
+
    ///
    /// Initialize the scenario.
    /// Called once, in the main client thread, before any operations are
@@ -263,6 +272,21 @@ public:
    {
       return readmodifywrite_proportion_;
    }
+   inline double
+   long_txn_ratio() const
+   {
+      return long_txn_ratio_;
+   }
+   inline double
+   long_txn_read_ratio() const
+   {
+      return long_txn_read_ratio_;
+   }
+   inline size_t
+   max_row_per_txn() const
+   {
+      return max_row_per_txn_;
+   }
 
    CoreWorkload()
       : generator_(),
@@ -325,6 +349,9 @@ protected:
    double                              insert_proportion_;
    double                              scan_proportion_;
    double                              readmodifywrite_proportion_;
+   double                              long_txn_ratio_;
+   double                              long_txn_read_ratio_;
+   size_t                              max_row_per_txn_;
 };
 
 inline void

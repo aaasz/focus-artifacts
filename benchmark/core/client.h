@@ -63,8 +63,10 @@ public:
       workload_.InitKeyBuffer(key);
       workload_.InitPairs(pairs);
 
-      abort_cnt = 0;
-      txn_cnt   = 0;
+      abort_cnt          = 0;
+      txn_cnt            = 0;
+      long_txn_abort_cnt = 0;
+      long_txn_cnt       = 0;
 
       srand48_r(id, &drand_buffer);
    }
@@ -83,9 +85,19 @@ public:
       return txn_cnt;
    }
    int
+   GetLongTxnCnt() const
+   {
+      return long_txn_cnt;
+   }
+   int
    GetAbortCnt() const
    {
       return abort_cnt;
+   }
+   int
+   GetLongTxnAbortCnt() const
+   {
+      return long_txn_abort_cnt;
    }
    const std::vector<double> &
    GetCommitTxnLatnecies() const
@@ -93,14 +105,29 @@ public:
       return commit_txn_latencies;
    }
    const std::vector<double> &
+   GetLongTxnCommitTxnLatnecies() const
+   {
+      return long_txn_commit_txn_latencies;
+   }
+   const std::vector<double> &
    GetAbortTxnLatnecies() const
    {
       return abort_txn_latencies;
+   }
+   const std::vector<double> &
+   GetLongTxnAbortTxnLatnecies() const
+   {
+      return long_txn_abort_txn_latencies;
    }
    const std::vector<unsigned long> &
    GetAbortCntPerTxn() const
    {
       return abort_cnt_per_txn;
+   }
+   const std::vector<unsigned long> &
+   GetLongTxnAbortCntPerTxn() const
+   {
+      return long_txn_abort_cnt_per_txn;
    }
 
 protected:
@@ -143,13 +170,18 @@ protected:
    // std::vector<ClientOperation> operations_in_transaction;
    std::unordered_set<ClientOperation> operations_in_transaction;
    unsigned long                       abort_cnt;
+   unsigned long                       long_txn_abort_cnt;
    unsigned long                       txn_cnt;
+   unsigned long                       long_txn_cnt;
    drand48_data                        drand_buffer;
 
    utils::Timer<double>       timer;
    std::vector<double>        commit_txn_latencies;
+   std::vector<double>        long_txn_commit_txn_latencies;
    std::vector<double>        abort_txn_latencies;
+   std::vector<double>        long_txn_abort_txn_latencies;
    std::vector<unsigned long> abort_cnt_per_txn;
+   std::vector<unsigned long> long_txn_abort_cnt_per_txn;
 };
 
 inline bool
@@ -266,6 +298,9 @@ Client::DoTransactionalOperations()
 
    bool is_abort = false;
    int  retry    = 0;
+   // A long txn should have max_row_per_txn
+   bool is_long_txn = operations_in_transaction.size()
+                      > (size_t)workload_.ops_per_transaction();
    do {
       is_abort            = false;
       int          status = -1;
@@ -304,7 +339,11 @@ Client::DoTransactionalOperations()
       }
 
       if (is_abort) {
-         ++abort_cnt;
+         if (is_long_txn) {
+            ++long_txn_abort_cnt;
+         } else {
+            ++abort_cnt;
+         }
          const int sleep_for =
             std::pow(2.0, retry) * workload_.min_txn_abort_panelty_us();
          if (sleep_for > 0) {
@@ -317,16 +356,28 @@ Client::DoTransactionalOperations()
    double latency_sec = timer.End();
    double latency_us  = latency_sec * 1000000;
    if (is_abort) {
-      abort_txn_latencies.push_back(latency_us);
+      if (is_long_txn) {
+         long_txn_abort_txn_latencies.push_back(latency_us);
+      } else {
+         abort_txn_latencies.push_back(latency_us);
+      }
    } else {
-      commit_txn_latencies.push_back(latency_us);
+      if (is_long_txn) {
+         long_txn_commit_txn_latencies.push_back(latency_us);
+      } else {
+         commit_txn_latencies.push_back(latency_us);
+      }
    }
 
-   abort_cnt_per_txn.push_back(retry);
+   if (is_long_txn) {
+      long_txn_abort_cnt_per_txn.push_back(retry);
+      long_txn_cnt += !is_abort;
+   } else {
+      abort_cnt_per_txn.push_back(retry);
+      txn_cnt += !is_abort;
+   }
 
    operations_in_transaction.clear();
-
-   txn_cnt += !is_abort;
 
    return true;
 }

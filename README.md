@@ -1,6 +1,6 @@
 # Testbed
 
-CloudLab(www.cloudlab.us) Clemson r6525 machine
+CloudLab(www.cloudlab.us) Clemson r650 machine
 
 # Setup
 
@@ -34,3 +34,11 @@ Results will be in `../tpcc_results`.
 ```
 
 Results will be in `../sketch_size_exp_results`.
+
+# YCSB cache experiment
+
+```sh
+./ycsb_cache.sh
+```
+
+Results will be in `../ycsb_cache_results`

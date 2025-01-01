@@ -14,15 +14,13 @@ bool
 lock(volatile int *var, uint8_t flag)
 {
    if (GET_WAIT_FOR_LOCK(flag) != WAIT_FOR_LOCK) {
-      return !__sync_lock_test_and_set(var, 1);
+      return __sync_lock_test_and_set(var, 1) == 0;
    } else {
       while (__sync_lock_test_and_set(var, 1))
-         while (var)
-            ;
+         while (*var)
+            __builtin_ia32_pause();
       return true;
    }
-
-   return false;
 }
 
 void

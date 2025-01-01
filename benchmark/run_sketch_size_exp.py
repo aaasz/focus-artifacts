@@ -83,14 +83,31 @@ def get_device_size_bytes(device: str) -> int:
     size = int(output.stdout.decode())
     return size
 
+def is_done(file_path):
+    try:
+        with open(file_path, 'r') as logfile:
+            lines = logfile.readlines()
+            for line in lines:
+                if '# Transaction throughput (KTPS)' in line:
+                    return True
+    except FileNotFoundError:
+        return False
+    return False
 
 def run(system, workload, num_threads):
-    results_root_dir = "../sketch_size_exp_results"
-    os.makedirs(results_root_dir, exist_ok=True)
-    results_path = f"{results_root_dir}/{system}-{workload}-{num_threads}"
+    os.makedirs("sketch_exp_results", exist_ok=True)
+    results_path = f"sketch_exp_results/{system}-{workload}-{num_threads}"
     os.makedirs(results_path, exist_ok=True)
     os.chdir(splinterdb_path)
-    run_cmd("git checkout -- .")
+    run_cmd("git checkout src/experimental_mode.h")
+    if system == "tictoc":
+        src_file = "transaction_tictoc_sketch.h"
+    elif system == "sto":
+        src_file = "transaction_sto.h"
+    elif system == "mvcc":
+        src_file = "transaction_mvcc_sketch.h"
+    run_cmd(f"git checkout src/transaction_impl/{src_file}")
+    run_cmd("git checkout deukyeon/mvcc-working-io_contexts")
     if system == "tictoc":
         run_cmd("sed -i 's/#define EXPERIMENTAL_MODE_TICTOC_SKETCH [ ]*0/#define EXPERIMENTAL_MODE_TICTOC_SKETCH 1/g' src/experimental_mode.h")
     elif system == "sto":
@@ -103,33 +120,25 @@ def run(system, workload, num_threads):
 
     dev_name = "/dev/nvme0n1"
     
-    if system == "tictoc":
-        src_file = "transaction_tictoc_sketch.h"
-    elif system == "sto":
-        src_file = "transaction_sto.h"
-    elif system == "mvcc":
-        src_file = "transaction_mvcc_sketch.h"
-        
-    cache_size = 6144
-    if workload == "read_intensive_67M":
-        cache_size = 614
+    cache_size = 614 if workload == "read_intensive_67M" else 6144
 
-    max_size = 8 * 1024 * 1024
-    rowsxcols = max_size // (128 // 8)
-    for rows in [2]:
-        cols = rowsxcols // rows
-        while (rows == 1 and cols == 1) or (rows == 2 and cols >= 1):
-            os.chdir(splinterdb_path)
-            run_cmd(f"sed -i 's/txn_splinterdb_cfg->sktch_config.rows = [0-9]\+;/txn_splinterdb_cfg->sktch_config.rows = {rows};/' src/transaction_impl/{src_file}")
-            run_cmd(f"sed -i 's/txn_splinterdb_cfg->sktch_config.cols = [0-9]\+;/txn_splinterdb_cfg->sktch_config.cols = {cols};/' src/transaction_impl/{src_file}")
-            run_cmd("sudo -E make clean")
-            run_cmd("sudo -E make -j16 install")
-            run_cmd('sudo ldconfig')
-            os.chdir(ycsb_path)
-            run_cmd("make clean")
-            run_cmd("make")
-
-            output_path = os.path.join(results_path, f"rows_{rows}_cols_{cols}")
+    rows = 2
+    for size in [128, 512, 1024, 2*1024, 4*1024, 8*1024, 16*1024, 32*1024, 128*1024, 4*1024*1024, 8*1024*1024]:
+        cols = (size // 16) // rows
+        os.chdir(ycsb_path)
+        output_path = os.path.join(results_path, f"rows_{rows}_cols_{cols}")
+        if os.path.exists(output_path):
+            continue
+        os.chdir(splinterdb_path)
+        run_cmd(f"sed -i 's/txn_splinterdb_cfg->sktch_config.rows = [0-9]\+;/txn_splinterdb_cfg->sktch_config.rows = {rows};/' src/transaction_impl/{src_file}")
+        run_cmd(f"sed -i 's/txn_splinterdb_cfg->sktch_config.cols = [0-9]\+;/txn_splinterdb_cfg->sktch_config.cols = {cols};/' src/transaction_impl/{src_file}")
+        run_cmd("sudo -E make clean")
+        run_cmd("sudo -E make install")
+        os.chdir(ycsb_path)
+        run_cmd("make clean")
+        run_cmd("make")
+        while not is_done(output_path):
+            run_cmd(f"sudo blkdiscard {dev_name}")
             run_cmd(f"LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so ./ycsbc \
                     -db transactional_splinterdb \
                     -threads {num_threads} \
@@ -143,10 +152,13 @@ def run(system, workload, num_threads):
                     -p splinterdb.io_contexts_per_process 64 \
                     -p splinterdb.disk_size_gb {get_device_size_bytes(dev_name) // (1024**3)} \
                     > {output_path} 2>&1")
-            
-            cols = cols // 2
     
     parse_result(results_path)
+
+    output_path = os.path.join(results_path, "memory.log")
+    if not os.path.exists(output_path):
+        while not is_done(output_path):
+            run_cmd(f"python3 ycsb.py -s {system}-memory -w {workload} -t {num_threads} -r 240 -d {dev_name} -c {cache_size} > {output_path} 2>&1")
 
             
 run("tictoc", "write_intensive", 60)

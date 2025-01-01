@@ -7,7 +7,7 @@ typedef struct transaction {
    void *internal;
 } transaction;
 #else
-#   define RW_SET_SIZE_LIMIT 64
+#   define RW_SET_SIZE_LIMIT 1000
 typedef struct rw_entry rw_entry;
 typedef struct transaction {
    rw_entry *rw_entries[RW_SET_SIZE_LIMIT];
@@ -27,7 +27,11 @@ typedef struct transaction {
 #   include "transaction_impl/transaction_tictoc_memory.h"
 #elif EXPERIMENTAL_MODE_TICTOC_COUNTER
 #   include "transaction_impl/transaction_tictoc_sketch.h"
+#elif EXPERIMENTAL_MODE_TICTOC_COUNTER_LAZY
+#   include "transaction_impl/transaction_tictoc_sketch.h"
 #elif EXPERIMENTAL_MODE_TICTOC_SKETCH
+#   include "transaction_impl/transaction_tictoc_sketch.h"
+#elif EXPERIMENTAL_MODE_TICTOC_SKETCH_LAZY
 #   include "transaction_impl/transaction_tictoc_sketch.h"
 #elif EXPERIMENTAL_MODE_STO_DISK
 #   include "transaction_impl/transaction_sto_disk.h"
@@ -35,7 +39,11 @@ typedef struct transaction {
 #   include "transaction_impl/transaction_sto_memory.h"
 #elif EXPERIMENTAL_MODE_STO_COUNTER
 #   include "transaction_impl/transaction_sto.h"
+#elif EXPERIMENTAL_MODE_STO_COUNTER_LAZY
+#   include "transaction_impl/transaction_sto.h"
 #elif EXPERIMENTAL_MODE_STO_SKETCH
+#   include "transaction_impl/transaction_sto.h"
+#elif EXPERIMENTAL_MODE_STO_SKETCH_LAZY
 #   include "transaction_impl/transaction_sto.h"
 #elif EXPERIMENTAL_MODE_MVCC_DISK
 #   include "transaction_impl/transaction_mvcc_disk.h"
@@ -43,7 +51,11 @@ typedef struct transaction {
 #   include "transaction_impl/transaction_mvcc_memory.h"
 #elif EXPERIMENTAL_MODE_MVCC_COUNTER
 #   include "transaction_impl/transaction_mvcc_sketch.h"
+#elif EXPERIMENTAL_MODE_MVCC_COUNTER_LAZY
+#   include "transaction_impl/transaction_mvcc_sketch.h"
 #elif EXPERIMENTAL_MODE_MVCC_SKETCH
+#   include "transaction_impl/transaction_mvcc_sketch.h"
+#elif EXPERIMENTAL_MODE_MVCC_SKETCH_LAZY
 #   include "transaction_impl/transaction_mvcc_sketch.h"
 #elif EXPERIMENTAL_MODE_2PL_NO_WAIT || EXPERIMENTAL_MODE_2PL_WAIT_DIE          \
    || EXPERIMENTAL_MODE_2PL_WOUND_WAIT

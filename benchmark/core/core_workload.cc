@@ -109,6 +109,16 @@ const string CoreWorkload::MAX_TXN_RETRY_DEFAULT  = "10";
 const std::string CoreWorkload::MAX_TXN_COUNT_PROPERTY = "maxtxncount";
 const std::string CoreWorkload::MAX_TXN_COUNT_DEFAULT  = "0";
 
+const std::string CoreWorkload::LONG_TXN_RATIO         = "longtxnratio";
+const std::string CoreWorkload::LONG_TXN_RATIO_DEFAULT = "0";
+
+const std::string CoreWorkload::LONG_TXN_READ_RATIO = "longtxnreadratio";
+const std::string CoreWorkload::LONG_TXN_READ_RATIO_DEFAULT = "1";
+
+const std::string CoreWorkload::MAX_ROW_PER_TXN         = "maxrowpertxn";
+const std::string CoreWorkload::MAX_ROW_PER_TXN_DEFAULT = "1000";
+
+
 void
 CoreWorkload::InitLoadWorkload(const utils::Properties &p,
                                unsigned int             nthreads,
@@ -249,6 +259,13 @@ CoreWorkload::InitRunWorkload(const utils::Properties &p,
    }
 
    // batch_size_ = 1;
+
+   long_txn_ratio_ =
+      std::stod(p.GetProperty(LONG_TXN_RATIO, LONG_TXN_RATIO_DEFAULT));
+   long_txn_read_ratio_ = std::stod(
+      p.GetProperty(LONG_TXN_READ_RATIO, LONG_TXN_READ_RATIO_DEFAULT));
+   max_row_per_txn_ =
+      std::stoul(p.GetProperty(MAX_ROW_PER_TXN, MAX_ROW_PER_TXN_DEFAULT));
 }
 
 void
