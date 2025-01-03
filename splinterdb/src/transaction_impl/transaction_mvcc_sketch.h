@@ -628,7 +628,7 @@ transactional_splinterdb_config_init(
    txn_splinterdb_cfg->sktch_config.insert_value_fn = &sketch_insert_timestamps;
    txn_splinterdb_cfg->sktch_config.get_value_fn    = &sketch_get_timestamps;
 
-   txn_splinterdb_cfg->iceberght_config.max_num_keys = 1000;
+   txn_splinterdb_cfg->iceberght_config.max_num_keys = 2000;
 #if EXPERIMENTAL_MODE_MVCC_COUNTER
    txn_splinterdb_cfg->sktch_config.rows = 1;
    txn_splinterdb_cfg->sktch_config.cols = 1;
