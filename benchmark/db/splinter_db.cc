@@ -2,8 +2,6 @@
 //  splinter_db.cc
 //  YCSB-C
 //
-//  Created by Rob Johnson on 3/20/2022.
-//  Copyright (c) 2022 VMware.
 //
 
 #include "db/splinter_db.h"

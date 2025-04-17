@@ -123,12 +123,12 @@ BUILD_DIR := $(BUILD_MODE)
 ifeq "$(BUILD_MODE)" "debug"
    CFLAGS    += -DSPLINTER_DEBUG
 else ifeq "$(BUILD_MODE)" "release"
-   CFLAGS    += -Ofast -flto
-   LDFLAGS   += -Ofast -flto
+   CFLAGS    += -O3 -ffast-math -flto
+   LDFLAGS   += -O3 -ffast-math -flto
 else ifeq "$(BUILD_MODE)" "optimized-debug"
    CFLAGS    += -DSPLINTER_DEBUG
-   CFLAGS    += -Ofast -flto
-   LDFLAGS   += -Ofast -flto
+   CFLAGS    += -O3 -ffast-math -flto
+   LDFLAGS   += -O3 -ffast-math -flto
 else
    $(error Unknown BUILD_MODE "$(BUILD_MODE)".  Valid options are "debug", "optimized-debug", and "release".  Default is "release")
 endif
@@ -266,7 +266,7 @@ EXAMPLES_BINS=$(EXAMPLES_BIN_SRC:$(EXAMPLES_DIR)/%_example.c=$(BINDIR)/$(EXAMPLE
 ####################################################################
 # The main targets
 #
-all: libs all-tests all-examples $(EXTRA_TARGETS)
+all: libs $(EXTRA_TARGETS)
 libs: $(LIBDIR)/libsplinterdb.so $(LIBDIR)/libsplinterdb.a
 all-tests: $(BINDIR)/driver_test $(BINDIR)/unit_test $(UNIT_TESTBINS)
 all-examples: $(EXAMPLES_BINS)
