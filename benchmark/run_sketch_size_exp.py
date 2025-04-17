@@ -106,7 +106,6 @@ def run(system, workload, num_threads):
     elif system == "mvcc":
         src_file = "transaction_mvcc_sketch.h"
     run_cmd(f"git checkout src/transaction_impl/{src_file}")
-    run_cmd("git checkout deukyeon/mvcc-working-io_contexts")
     if system == "tictoc":
         run_cmd("sed -i 's/#define EXPERIMENTAL_MODE_TICTOC_COUNTER [ ]*0/#define EXPERIMENTAL_MODE_TICTOC_COUNTER 1/g' src/experimental_mode.h")
     elif system == "sto":

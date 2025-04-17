@@ -32,36 +32,6 @@ available_systems = [
     'mvcc-sketch-lazy'
 ]
 
-system_branch_map = {
-    'splinterdb': 'deukyeon/mvcc-working-io_contexts',
-    'tictoc-disk': 'deukyeon/mvcc-working-io_contexts',
-    'silo-disk': 'deukyeon/mvcc-working-io_contexts',
-    'occ-serial': 'deukyeon/mvcc-working-io_contexts',
-    'occ-parallel': 'deukyeon/mvcc-working-io_contexts',
-    'silo-memory': 'deukyeon/mvcc-working-io_contexts',
-    'tictoc-memory': 'deukyeon/mvcc-working-io_contexts',
-    'tictoc-counter': 'deukyeon/mvcc-working-io_contexts',
-    'tictoc-counter-lazy': 'deukyeon/mvcc-working-io_contexts',
-    'tictoc-sketch': 'deukyeon/mvcc-working-io_contexts',
-    'tictoc-sketch-lazy': 'deukyeon/mvcc-working-io_contexts',
-    'sto-disk': 'deukyeon/mvcc-working-io_contexts',
-    'sto-sketch': 'deukyeon/mvcc-working-io_contexts',
-    'sto-sketch-lazy': 'deukyeon/mvcc-working-io_contexts',
-    'sto-counter': 'deukyeon/mvcc-working-io_contexts',
-    'sto-counter-lazy': 'deukyeon/mvcc-working-io_contexts',
-    'sto-memory': 'deukyeon/mvcc-working-io_contexts',
-    'sto-legacy': 'deukyeon/mvcc-working-io_contexts',
-    '2pl-no-wait': 'deukyeon/mvcc-working-io_contexts',
-    '2pl-wait-die': 'deukyeon/mvcc-working-io_contexts',
-    '2pl-wound-wait': 'deukyeon/mvcc-working-io_contexts',
-    'mvcc-disk': 'deukyeon/mvcc-working-io_contexts',
-    'mvcc-memory': 'deukyeon/mvcc-working-io_contexts',
-    'mvcc-counter': 'deukyeon/mvcc-working-io_contexts',
-    'mvcc-counter-lazy': 'deukyeon/mvcc-working-io_contexts',
-    'mvcc-sketch': 'deukyeon/mvcc-working-io_contexts',
-    'mvcc-sketch-lazy': 'deukyeon/mvcc-working-io_contexts',
-}
-
 system_sed_map = {
     'occ-serial': ["sed -i 's/#define EXPERIMENTAL_MODE_KR_OCC [ ]*0/#define EXPERIMENTAL_MODE_KR_OCC 1/g' src/experimental_mode.h"],
     'occ-parallel': ["sed -i 's/#define EXPERIMENTAL_MODE_KR_OCC_PARALLEL [ ]*0/#define EXPERIMENTAL_MODE_KR_OCC_PARALLEL 1/g' src/experimental_mode.h"],
@@ -115,7 +85,6 @@ class ExpSystem:
             run_cmd(f'tar czf splinterdb-backup-{time.time()}.tar.gz {splinterdb_dir}')
         os.chdir(splinterdb_dir)
         run_cmd('git checkout -- src/experimental_mode.h')
-        run_cmd(f'git checkout {system_branch_map[sys]}')
         run_cmd('sudo -E make clean')
         if sys in system_sed_map:
             for sed in system_sed_map[sys]:
