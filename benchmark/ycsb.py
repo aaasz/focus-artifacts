@@ -83,7 +83,10 @@ def main(argc, argv):
     if not os.path.exists(splinterdb_dir):
         print(f'{splinterdb_dir} does not exist.', file=sys.stderr)
         exit(1)
-    ExpSystem.build(system, splinterdb_dir, backup=False)
+    if conf == "long_txn":
+        ExpSystem.build_for_long_txn(system, splinterdb_dir, spl_threads=threads+2, backup=False)
+    else:
+        ExpSystem.build(system, splinterdb_dir, spl_threads=threads+2, backup=False)
 
     db = 'splinterdb' if system == 'splinterdb' else 'transactional_splinterdb'
     
@@ -93,6 +96,7 @@ def main(argc, argv):
     max_num_threads = min(os.cpu_count(), max_total_threads)
 
     if enable_bgthreads:
+        assert False, "not used"
         num_normal_bg_threads = threads
         num_memtable_bg_threads = (threads + 9) // 10
 

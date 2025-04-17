@@ -92,12 +92,21 @@ system_sed_map = {
 
 class ExpSystem:
     @staticmethod
-    def build(sys, splinterdb_dir, backup=True):
-
+    def build(sys, splinterdb_dir, spl_threads, backup=True):
+        spl_threads = max(64, spl_threads)
 
         def run_cmd(cmd):
             subprocess.call(cmd, shell=True)
         
+        def change_max_threads():
+            with open('src/platform_linux/platform.h', 'r') as f:
+                lines = f.readlines()
+            with open('src/platform_linux/platform.h', 'w') as f:
+                for line in lines:
+                    if line.startswith('#define MAX_THREADS ('):
+                        f.write(f'#define MAX_THREADS ({spl_threads})\n')
+                    else:
+                        f.write(line)
 
         os.environ['CC'] = 'clang'
         os.environ['LD'] = 'clang'
@@ -105,11 +114,75 @@ class ExpSystem:
         if backup:
             run_cmd(f'tar czf splinterdb-backup-{time.time()}.tar.gz {splinterdb_dir}')
         os.chdir(splinterdb_dir)
-        run_cmd('git checkout -- src')
+        run_cmd('git checkout -- src/experimental_mode.h')
+        run_cmd(f'git checkout {system_branch_map[sys]}')
         run_cmd('sudo -E make clean')
         if sys in system_sed_map:
             for sed in system_sed_map[sys]:
                 run_cmd(sed)
+        change_max_threads()
+        run_cmd('sudo -E make -j16 install')
+        run_cmd('sudo ldconfig')
+        os.chdir(current_dir)
+        run_cmd('make clean')
+        run_cmd('make')
+
+    @staticmethod
+    def build_for_long_txn(sys, splinterdb_dir, spl_threads, backup=True):
+        spl_threads = max(64, spl_threads)
+
+        def run_cmd(cmd):
+            subprocess.call(cmd, shell=True)
+        
+        def change_max_threads():
+            with open('src/platform_linux/platform.h', 'r') as f:
+                lines = f.readlines()
+            with open('src/platform_linux/platform.h', 'w') as f:
+                for line in lines:
+                    if line.startswith('#define MAX_THREADS ('):
+                        f.write(f'#define MAX_THREADS ({spl_threads})\n')
+                    else:
+                        f.write(line)
+
+        os.environ['CC'] = 'clang'
+        os.environ['LD'] = 'clang'
+        current_dir = os.getcwd()
+        if backup:
+            run_cmd(f'tar czf splinterdb-backup-{time.time()}.tar.gz {splinterdb_dir}')
+        os.chdir(splinterdb_dir)
+        run_cmd('git checkout -- src/experimental_mode.h')
+        run_cmd(f'git checkout {system_branch_map[sys]}')
+        run_cmd('sudo -E make clean')
+        if sys in system_sed_map:
+            for sed in system_sed_map[sys]:
+                run_cmd(sed)
+        change_max_threads()
+        
+        filename = 'src/transaction_impl/transaction_kr_occ.h'
+        run_cmd(f'git checkout -- {filename}')
+        with open(splinterdb_dir + "/" + filename, 'r') as f:
+            write_lines = []
+            for line in f:
+                if line.startswith("#define TRANSACTION_RW_SET_MAX"):
+                    write_lines.append("#define TRANSACTION_RW_SET_MAX 1000\n")
+                else:
+                    write_lines.append(line)
+        with open(splinterdb_dir + "/" + filename, 'w') as f:
+            f.writelines(write_lines)
+        
+        for filename in ['transaction_sto.h', 'transaction_tictoc_sketch.h', 'transaction_mvcc_sketch.h']:
+            filename = f'src/transaction_impl/{filename}'
+            run_cmd(f'git checkout -- {filename}')
+            with open(splinterdb_dir + "/" + filename, 'r') as f:
+                write_lines = []
+                for line in f:
+                    if "const int num_active_keys_per_txn =" in line:
+                        write_lines.append("const int num_active_keys_per_txn = 1000;\n")
+                    else:
+                        write_lines.append(line)
+            with open(splinterdb_dir + "/" + filename, 'w') as f:
+                f.writelines(write_lines)
+
         run_cmd('sudo -E make -j16 install')
         run_cmd('sudo ldconfig')
         os.chdir(current_dir)

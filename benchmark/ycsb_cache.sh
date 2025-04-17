@@ -16,9 +16,9 @@ for work in ${WORKLOADS[@]}
 do 
     for sys in ${SYSTEMS[@]}
     do
-        for thr in 60
+        for thr in 120
         do
-            for cache in 6 7 9 13 21 37
+            for cache in 6 12 18 24 30 36
             do
                 for run in $(seq 1 ${NRUNS})
                 do
@@ -32,7 +32,7 @@ do
                     # Retry until the output file contains the desired line
                     while true
                     do
-                        timeout 3600 ./ycsb.py -g -s $sys -w $work -t $thr -c $(($cache * 1024)) -r 240 -d $DEV | tee $LOG_FILE
+                        timeout 3600 ./ycsb.py -s $sys -w $work -t $thr -c $(($cache * 1024)) -r 240 -d $DEV | tee $LOG_FILE
 
                         # Check if the log file contains the required line
                         if grep -q "# Transaction throughput (KTPS)" "$LOG_FILE"; then

@@ -275,7 +275,7 @@ slot_mask_64_half(__m256i fprint, __m256i md, __m256i mask)
 {
    __m256i masked_fp = _mm256_or_si256(fprint, mask);
    __m256i masked_md = _mm256_or_si256(md, mask);
-   __m256i cmp = _mm256_cmpeq_epi8(masked_md, masked_fp);
+   __m256i cmp       = _mm256_cmpeq_epi8(masked_md, masked_fp);
    return _mm256_movemask_epi8(cmp);
 }
 
@@ -284,12 +284,12 @@ slot_mask_64(uint8_t *metadata, uint8_t fp)
 {
    __m256i fprint = _mm256_set1_epi8(fp);
 
-   __m256i md1 = _mm256_loadu_si256((const __m256i *)(metadata));
-   __m256i mask1 = _mm256_loadu_si256((const __m256i *)(broadcast_mask));
+   __m256i  md1     = _mm256_loadu_si256((const __m256i *)(metadata));
+   __m256i  mask1   = _mm256_loadu_si256((const __m256i *)(broadcast_mask));
    uint64_t result1 = slot_mask_64_half(fprint, md1, mask1);
 
-   __m256i md2 = _mm256_loadu_si256((const __m256i *)(&metadata[32]));
-   __m256i mask2 = _mm256_loadu_si256((const __m256i *)(&broadcast_mask[32]));
+   __m256i  md2   = _mm256_loadu_si256((const __m256i *)(&metadata[32]));
+   __m256i  mask2 = _mm256_loadu_si256((const __m256i *)(&broadcast_mask[32]));
    uint64_t result2 = slot_mask_64_half(fprint, md2, mask2);
 
    return ((uint64_t)result2 << 32) | result1;
@@ -920,40 +920,39 @@ iceberg_evict(iceberg_table *table, threadid thread_id)
          }
 
          // going to the same block in lv2
-         /*
-         if (!done) {
-           iceberg_lv2_block *blocks = table->level2[0];
-           __mmask32 md_mask =
-             slot_mask_32(table->metadata.lv2_md[0][hand].block_md, 0)
-             & ((1 << (C_LV2 + MAX_LG_LG_N / D_CHOICES)) - 1);
-           md_mask = ~md_mask;
-           uint8_t popct = __builtin_popcount(md_mask);
-           for (int i = 0; i < popct; ++i) {
-             uint8_t slot = word_select(md_mask, i);
-             if (table->metadata.lv2_md[0][hand].block_md[slot] > 0) {
-               if (blocks[hand].slots[slot].refcount == 0) {
-                 blocks[hand].slots[slot].refcount = -1;
-               } else if (blocks[hand].slots[slot].refcount == -1) {
-                 platform_assert(table->sktch,
-                                 "Eviction requires a counter\n");
-                 sketch_insert(table->sktch,
-                               blocks[hand].slots[slot].key,
-                               blocks[hand].slots[slot].val);
-                 if (table->config.post_remove) {
-                   table->config.post_remove(&blocks[hand].slots[slot].val);
-                 }
-                 table->metadata.lv2_md[0][hand].block_md[slot] = 0;
-                 void *ptr = (void *)slice_data(blocks[hand].slots[slot].key);
-                 platform_free(0, ptr);
-                 blocks[hand].slots[slot].key      = NULL_SLICE;
-                 blocks[hand].slots[slot].refcount = 0;
-                 pc_add(&table->metadata.lv2_balls, -1, thread_id);
-                 done = true;
-               }
-             }
-           }
-         }
-         */
+         // if (!done) {
+         //   iceberg_lv2_block *blocks = table->level2[0];
+         //   __mmask32 md_mask =
+         //     slot_mask_32(table->metadata.lv2_md[0][hand].block_md, 0)
+         //     & ((1 << (C_LV2 + MAX_LG_LG_N / D_CHOICES)) - 1);
+         //   md_mask = ~md_mask;
+         //   uint8_t popct = __builtin_popcount(md_mask);
+         //   for (int i = 0; i < popct; ++i) {
+         //     uint8_t slot = word_select(md_mask, i);
+         //     if (table->metadata.lv2_md[0][hand].block_md[slot] > 0) {
+         //       if (blocks[hand].slots[slot].refcount == 0) {
+         //         blocks[hand].slots[slot].refcount = -1;
+         //       } else if (blocks[hand].slots[slot].refcount == -1) {
+         //         platform_assert(table->sktch,
+         //                         "Eviction requires a counter\n");
+         //         sketch_insert(table->sktch,
+         //                       blocks[hand].slots[slot].key,
+         //                       blocks[hand].slots[slot].val);
+         //         if (table->config.post_remove) {
+         //           table->config.post_remove(&blocks[hand].slots[slot].val);
+         //         }
+         //         table->metadata.lv2_md[0][hand].block_md[slot] = 0;
+         //         void *ptr = (void
+         //         *)slice_data(blocks[hand].slots[slot].key); platform_free(0,
+         //         ptr); blocks[hand].slots[slot].key      = NULL_SLICE;
+         //         blocks[hand].slots[slot].refcount = 0;
+         //         pc_add(&table->metadata.lv2_balls, -1, thread_id);
+         //         done = true;
+         //       }
+         //     }
+         //   }
+         // }
+
          unlock_block((uint64_t *)&table->metadata.lv1_md[0][hand].block_md);
       }
    } while (!done);
@@ -1199,8 +1198,46 @@ start:;
 
    uint8_t popct = __builtin_popcountll(md_mask);
 
-   if (unlikely(!popct))
-      return false;
+   if (unlikely(!popct)) {
+      // if (table->sktch) {
+      //    // We want to use lv1 only because the current eviction code
+      //    // supports lv1 only. Although we configure the hash table size
+      //    // enough large, there is a rare chance that the lv1 block is full
+      //    // for a workload. In this case, an item not being used will be
+      //    // evicted.
+      //    bool done = false;
+      //    md_mask   = ~md_mask;
+      //    while (md_mask != 0) {
+      //       int slot = __builtin_ctzll(md_mask);
+      //       md_mask  = md_mask & ~(1ULL << slot);
+      //       platform_assert(metadata->lv1_md[bindex][boffset].block_md[slot]
+      //                       > 0);
+      //       if (blocks[boffset].slots[slot].refcount <= 0) {
+      //          platform_assert(table->sktch, "Eviction requires a counter\n");
+      //          sketch_insert(table->sktch,
+      //                        blocks[boffset].slots[slot].key,
+      //                        blocks[boffset].slots[slot].val);
+      //          if (table->config.post_remove) {
+      //             table->config.post_remove(&blocks[boffset].slots[slot].val);
+      //          }
+      //          metadata->lv1_md[bindex][boffset].block_md[slot] = 0;
+      //          void *ptr = (void *)slice_data(blocks[boffset].slots[slot].key);
+      //          platform_free(0, ptr);
+      //          blocks[boffset].slots[slot].key      = NULL_SLICE;
+      //          blocks[boffset].slots[slot].refcount = 0;
+      //          pc_add(&metadata->lv1_balls, -1, thread_id);
+      //          done = true;
+      //          break;
+      //       }
+      //    }
+      //    platform_assert(done, "No empty slot in the block\n");
+      //    md_mask = slot_mask_64(metadata->lv1_md[bindex][boffset].block_md, 0);
+      //    popct   = __builtin_popcountll(md_mask);
+      //    platform_assert(likely(popct));
+      // } else {
+         return false;
+      // }
+   }
 
    uint8_t start = 0;
    uint8_t slot  = word_select(md_mask, start);
@@ -1617,7 +1654,8 @@ iceberg_lv3_remove_internal(iceberg_table *table,
       iceberg_lv3_node *next_node = current_node->next_node;
 
       if (iceberg_key_compare(table->spl_data_config, next_node->kv.key, key)
-          == 0) {
+          == 0)
+      {
          bool should_remove = false;
          if (force_remove) {
             should_remove = true;
@@ -2210,7 +2248,8 @@ iceberg_lv3_get_value_internal(iceberg_table *table,
 
    for (uint64_t i = 0; i < metadata->lv3_sizes[bindex][boffset]; ++i) {
       if (iceberg_key_compare(table->spl_data_config, current_node->kv.key, key)
-          == 0) {
+          == 0)
+      {
          *kv                                  = &current_node->kv;
          metadata->lv3_locks[bindex][boffset] = 0;
          return true;

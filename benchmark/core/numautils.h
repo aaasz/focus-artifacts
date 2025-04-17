@@ -1,4 +1,3 @@
-
 #ifndef YCSB_C_NUMAUTILS_H_
 #define YCSB_C_NUMAUTILS_H_
 
@@ -10,6 +9,52 @@
 #include <cstring>
 
 namespace numautils {
+
+struct CPUTopology {
+    uint32_t physical_cores;
+    uint32_t threads_per_core;
+    uint32_t total_threads;
+};
+
+inline CPUTopology get_cpu_topology() {
+    CPUTopology topology = {0, 0, 0};
+    
+    #ifdef __linux__
+    FILE* fp = popen("lscpu | grep -E '^CPU\\(s\\)|^Thread|^Core'", "r");
+    if (fp != nullptr) {
+        char line[256];
+        while (fgets(line, sizeof(line), fp)) {
+            if (strstr(line, "CPU(s):")) {
+                sscanf(line, "CPU(s): %u", &topology.total_threads);
+            } else if (strstr(line, "Thread(s) per core:")) {
+                sscanf(line, "Thread(s) per core: %u", &topology.threads_per_core);
+            } else if (strstr(line, "Core(s) per socket:")) {
+                uint32_t cores_per_socket;
+                sscanf(line, "Core(s) per socket: %u", &cores_per_socket);
+                // Also need to get number of sockets
+                FILE* socket_fp = popen("lscpu | grep '^Socket'", "r");
+                if (socket_fp != nullptr) {
+                    char socket_line[256];
+                    if (fgets(socket_line, sizeof(socket_line), socket_fp)) {
+                        uint32_t num_sockets;
+                        sscanf(socket_line, "Socket(s): %u", &num_sockets);
+                        topology.physical_cores = cores_per_socket * num_sockets;
+                    }
+                    pclose(socket_fp);
+                }
+            }
+        }
+        pclose(fp);
+    }
+    #else
+    // Fallback to hardware_concurrency for non-Linux systems
+    topology.total_threads = std::thread::hardware_concurrency();
+    topology.threads_per_core = 1; // Conservative assumption
+    topology.physical_cores = topology.total_threads;
+    #endif
+
+    return topology;
+}
 
 std::vector<size_t>
 get_cores(const int max_cpus_wanted)

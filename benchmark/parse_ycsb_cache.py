@@ -10,7 +10,8 @@ def parse_input_file(file_path):
 
     # Define regex patterns for the required information
     load_throughput_pattern = r"# Load throughput \(KTPS\)\n.*\s+(\d+\.\d+)"
-    thread_goodput_pattern = r"# Transaction throughput \(KTPS\)\n.*\s+(\d+)\s+(\d+\.\d+)"
+    thread_count_pattern = r"# Number of client threads:\s+(\d+)"
+    thread_goodput_pattern = r"# Transaction throughput \(KTPS\)\s+(\d+\.\d+)"
     abort_count_pattern = r"# Abort count:\s+(\d+)"
     abort_rate_pattern = r"Abort rate:\s+(.+)"
     commit_latency_pattern = r"# Commit Latencies \(us\)\nMin:\s+(.+)\nMax:\s+(.+)\nAvg:\s+(.+)\nP50:\s+(.+)\nP90:\s+(.+)\nP95:\s+(.+)\nP99:\s+(.+)\nP99\.9:\s+(.+)"
@@ -20,13 +21,11 @@ def parse_input_file(file_path):
     load_throughput = re.search(load_throughput_pattern, input_text)
     load_throughput = load_throughput.group(1) if load_throughput else 0
 
-    thread_goodput = re.search(thread_goodput_pattern, input_text)
-    if thread_goodput:
-        thread_count = thread_goodput.group(1)
-        goodput = thread_goodput.group(2)
-    else:
-        thread_count = 0
-        goodput = 0
+    thread_count = re.search(thread_count_pattern, input_text)
+    thread_count = thread_count.group(1) if thread_count else 0
+
+    goodput = re.search(thread_goodput_pattern, input_text)
+    goodput = goodput.group(1) if goodput else 0
 
     abort_count = re.search(abort_count_pattern, input_text)
     abort_count = abort_count.group(1) if abort_count else 0
@@ -142,10 +141,10 @@ os.makedirs(output_dir, exist_ok=True)
 for system in output_filenames.keys():
     for workload in ['write_intensive', 'read_intensive', 'write_intensive_medium', 'read_intensive_medium',
                      'mixed', 'mixed_medium', 'long_txn',
-                     'tpcc-wh4', 'tpcc-wh8', 'tpcc-wh16', 'tpcc-wh32', 'tpcc-wh60', 'tpcc-wh1000']:
+                     'tpcc-wh4', 'tpcc-wh8', 'tpcc-wh16', 'tpcc-wh32']:
         for cache in range(6, 56 ,6):
             input_file_paths = []
-            for thr in [1, 2] + list(range(4, 64, 4)):
+            for thr in [1, 2] + list(range(4, 128, 4)):
                 for run in range(1, 4):
                     input_file = f'{input_dir}/{system}_{workload}_{thr}_{cache}GB_{run}.log'
                     if os.path.exists(input_file):

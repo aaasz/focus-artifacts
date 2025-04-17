@@ -1,7 +1,7 @@
 #!/usr/bin/bash -x
 
 SYSTEMS=(2pl-no-wait occ-serial sto-disk sto-memory sto-sketch sto-counter-lazy tictoc-disk tictoc-memory tictoc-sketch tictoc-counter-lazy mvcc-memory mvcc-sketch mvcc-disk mvcc-counter-lazy)
-WORKLOADS=(tpcc-wh4 tpcc-wh8 tpcc-wh16 tpcc-wh32 tpcc-wh60)
+WORKLOADS=(tpcc-wh4 tpcc-wh8 tpcc-wh16 tpcc-wh32)
 
 LOG_DIR=../tpcc_logs
 OUTPUT_DIR=../tpcc_results
@@ -11,7 +11,7 @@ DEV=/dev/nvme0n1
 NRUNS=3
 
 CACHE_SIZE=256
-RUN_SEC=60
+RUN_SEC=120
 
 mkdir -p $LOG_DIR
 
@@ -23,8 +23,7 @@ do
             continue
         fi
 
-        # for thr in 1 2 4 8 12 16 20 24 28 32 36 40 44 48 52 56 60
-        for thr in 60
+        for thr in 120
         do
             for run in $(seq 1 ${NRUNS})
             do
@@ -33,12 +32,6 @@ do
                 # Skip if log file already exists and contains the desired line
                 if [ -f "$LOG_FILE" ] && grep -q "# Transaction throughput (KTPS)" "$LOG_FILE"; then
                     continue
-                fi
-
-                if [[ "$work" == tpcc-wh60 ]]; then
-                    CACHE_SIZE=512
-                elif [[ "$work" == tpcc-wh1000 ]]; then
-                    CACHE_SIZE=6144
                 fi
 
                 # Retry until the output file contains the desired line

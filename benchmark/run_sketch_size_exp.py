@@ -24,17 +24,15 @@ def parse_result(results_path):
         lines = f.readlines()
         f.close()
 
-        run_data = False
 
         for line in lines:
-            if run_data:
+            if line.startswith("# Number of client threads:"):
                 fields = line.split()
-                run_threads = fields[-2]
-                run_tputs = fields[-1]
-                run_data = False
+                run_threads = fields[-1]
 
             if line.startswith("# Transaction throughput (KTPS)"):
-                run_data = True
+                fields = line.split()
+                run_tputs = fields[-1]
 
             if line.startswith("# Abort count:"):
                 fields = line.split()
@@ -95,8 +93,9 @@ def is_done(file_path):
     return False
 
 def run(system, workload, num_threads):
-    os.makedirs("sketch_exp_results", exist_ok=True)
-    results_path = f"sketch_exp_results/{system}-{workload}-{num_threads}"
+    results_root = os.path.abspath("../sketch_exp_results")
+    os.makedirs(results_root, exist_ok=True)
+    results_path = f"{results_root}/{system}-{workload}-{num_threads}"
     os.makedirs(results_path, exist_ok=True)
     os.chdir(splinterdb_path)
     run_cmd("git checkout src/experimental_mode.h")
@@ -109,11 +108,23 @@ def run(system, workload, num_threads):
     run_cmd(f"git checkout src/transaction_impl/{src_file}")
     run_cmd("git checkout deukyeon/mvcc-working-io_contexts")
     if system == "tictoc":
-        run_cmd("sed -i 's/#define EXPERIMENTAL_MODE_TICTOC_SKETCH [ ]*0/#define EXPERIMENTAL_MODE_TICTOC_SKETCH 1/g' src/experimental_mode.h")
+        run_cmd("sed -i 's/#define EXPERIMENTAL_MODE_TICTOC_COUNTER [ ]*0/#define EXPERIMENTAL_MODE_TICTOC_COUNTER 1/g' src/experimental_mode.h")
     elif system == "sto":
-        run_cmd("sed -i 's/#define EXPERIMENTAL_MODE_STO_SKETCH [ ]*0/#define EXPERIMENTAL_MODE_STO_SKETCH 1/g' src/experimental_mode.h")
+        run_cmd("sed -i 's/#define EXPERIMENTAL_MODE_STO_COUNTER [ ]*0/#define EXPERIMENTAL_MODE_STO_COUNTER 1/g' src/experimental_mode.h")
     elif system == "mvcc":
-        run_cmd("sed -i 's/#define EXPERIMENTAL_MODE_MVCC_SKETCH [ ]*0/#define EXPERIMENTAL_MODE_MVCC_SKETCH 1/g' src/experimental_mode.h")
+        run_cmd("sed -i 's/#define EXPERIMENTAL_MODE_MVCC_COUNTER [ ]*0/#define EXPERIMENTAL_MODE_MVCC_COUNTER 1/g' src/experimental_mode.h")
+
+    def change_max_threads():
+        run_cmd("git checkout src/platform_linux/platform.h")
+        with open('src/platform_linux/platform.h', 'r') as f:
+            lines = f.readlines()
+        with open('src/platform_linux/platform.h', 'w') as f:
+            for line in lines:
+                if line.startswith('#define MAX_THREADS ('):
+                    f.write(f'#define MAX_THREADS ({max(64, num_threads + 2)})\n')
+                else:
+                    f.write(line)
+    change_max_threads()
 
     os.environ['CC'] = "clang"
     os.environ['LD'] = "clang"
@@ -123,7 +134,7 @@ def run(system, workload, num_threads):
     cache_size = 614 if workload == "read_intensive_67M" else 6144
 
     rows = 2
-    for size in [128, 512, 1024, 2*1024, 4*1024, 8*1024, 16*1024, 32*1024, 128*1024, 4*1024*1024, 8*1024*1024]:
+    for size in [128, 512, 1024, 2*1024, 4*1024, 8*1024, 16*1024, 32*1024, 128*1024, 4*1024*1024, 8*1024*1024, 16*1024*1024, 32*1024*1024]:
         cols = (size // 16) // rows
         os.chdir(ycsb_path)
         output_path = os.path.join(results_path, f"rows_{rows}_cols_{cols}")
@@ -161,17 +172,26 @@ def run(system, workload, num_threads):
             run_cmd(f"python3 ycsb.py -s {system}-memory -w {workload} -t {num_threads} -r 240 -d {dev_name} -c {cache_size} > {output_path} 2>&1")
 
             
+run("tictoc", "write_intensive", 120)
 run("tictoc", "write_intensive", 60)
+run("tictoc", "read_intensive", 120)
 run("tictoc", "read_intensive", 60)
 run("tictoc", "read_intensive", 16)
+run("tictoc", "read_intensive_67M", 120)
 run("tictoc", "read_intensive_67M", 60)
 
+run("sto", "write_intensive", 120)
 run("sto", "write_intensive", 60)
+run("sto", "read_intensive", 120)
 run("sto", "read_intensive", 60)
 run("sto", "read_intensive", 16)
+run("sto", "read_intensive_67M", 120)
 run("sto", "read_intensive_67M", 60)
 
+run("mvcc", "write_intensive", 120)
 run("mvcc", "write_intensive", 60)
+run("mvcc", "read_intensive", 120)
 run("mvcc", "read_intensive", 60)
 run("mvcc", "read_intensive", 16)
+run("mvcc", "read_intensive_67M", 120)
 run("mvcc", "read_intensive_67M", 60)
