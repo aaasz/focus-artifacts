@@ -3,9 +3,9 @@
 ## Project Structure
 
 - **splinterdb/**
-  - `src/transaction_impl`: Implementation of transaction protocols
-  - `src/FPSketch`: Implementation of FPSketch
-  - Other code is related to SplinterDB internal components
+  - `src/transaction_impl/`: Implementation of transaction protocols
+  - `src/FPSketch/`: Implementation of FPSketch
+  - All other files are related to SplinterDB
 
 - **benchmark/**
   - Contains YCSB and TPCC benchmarks

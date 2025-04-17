@@ -39,7 +39,6 @@ TPCCTransaction::gen_payment(uint64_t thd_id)
       } else
          c_w_id = w_id;
    }
-   // aaasz: we just lookup clients by their id
    c_id = NURand(1023, 1, g_cust_per_dist, thd_id);
    assert(1 <= c_id && c_id <= g_cust_per_dist);
 }
@@ -330,7 +329,6 @@ TPCCWorkload::init_customer_table(uint64_t did, uint64_t wid)
       r.c_balance     = -10.0;
       r.c_ytd_payment = 10.0;
       r.c_payment_cnt = 1;
-      // aaasz: we store only by primary key
       TPCCKey key = cKey(cid, did, wid);
       _db->Store(&key, sizeof(TPCCKey), &r, sizeof(r));
    }
