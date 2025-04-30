@@ -120,7 +120,6 @@ class ExpSystem:
             run_cmd(f'tar czf splinterdb-backup-{time.time()}.tar.gz {splinterdb_dir}')
         os.chdir(splinterdb_dir)
         run_cmd('git checkout -- src/experimental_mode.h')
-        run_cmd(f'git checkout {system_branch_map[sys]}')
         run_cmd('sudo -E make clean')
         if sys in system_sed_map:
             for sed in system_sed_map[sys]:
