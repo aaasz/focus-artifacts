@@ -125,11 +125,48 @@ def main(argc, argv):
         cmd += f' -p splinterdb.disk_size_gb {get_device_size_bytes(dev_name) // (1024**3)}'
     # cmd += ' -p splinterdb.cache_use_stats 1 -p splinterdb.use_stats 1'
 
-    if system == 'mvcc-disk':
-        cmd += ' -w mintxnabortpaneltyus 30000'
+    cmd += ' -p splinterdb.use_log 0'
+
+    backofftime = {
+            '/dev/md127': {
+                60: {
+                    'read': {
+                        'default': 20000,
+                        'tictoc-disk': 20000,
+                        'mvcc-disk': 1500000
+                        },
+                    'write': {
+                        'default': 5000,
+                        'sto-disk': 10000,
+                        'tictoc-disk': 20000,
+                        'mvcc-disk': 1500000
+                        },
+                    'mixed': {
+                        'default': 5000,
+                        'mvcc-disk': 630000
+                        }
+                    }
+                }
+            }
+
+    # No support long_txn now
+    if 'read' in conf:
+        conf_type = 'read'
+    elif 'write' in conf:
+        conf_type = 'write'
+    else:
+        conf_type = 'mixed'
+
+    if system in backofftime[dev_name][threads][conf_type]:
+        backoff = backofftime[dev_name][threads][conf_type][system]
+    else:
+        backoff = backofftime[dev_name][threads][conf_type]['default']
+
+    cmd += f' -w mintxnabortpaneltyus {backoff}'
 
     # run load phase
     # os.system(f'LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so ./ycsbc -db {db} -threads {threads} -L {spec_file} -p splinterdb.filename {dev_name} -p splinterdb.cache_size_mb {cache_size_mb}')
+    print(cmd)
     os.system(cmd)
     
 if __name__ == '__main__':
