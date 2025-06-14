@@ -422,6 +422,8 @@ iceberg_init(iceberg_table     *table,
       perror("level1 malloc failed");
       exit(1);
    }
+
+   /*
    size_t level2_size = sizeof(iceberg_lv2_block) * total_blocks;
    // table->level2 = (iceberg_lv2_block *)malloc(level2_size);
    table->level2[0] = (iceberg_lv2_block *)mmap(
@@ -437,7 +439,12 @@ iceberg_init(iceberg_table     *table,
       perror("level3 malloc failed");
       exit(1);
    }
+   */
 
+   // USE level1 only
+   table->level2[0] = NULL;
+   table->level3[0] = NULL;
+   
    table->metadata.total_size_in_bytes = total_size_in_bytes;
    table->metadata.nslots              = 1 << log_slots;
    table->metadata.nblocks             = total_blocks;
@@ -460,6 +467,7 @@ iceberg_init(iceberg_table     *table,
       perror("lv1_md malloc failed");
       exit(1);
    }
+   /*
    // table->metadata.lv2_md = (iceberg_lv2_block_md
    // *)malloc(sizeof(iceberg_lv2_block_md) * total_blocks);
    size_t lv2_md_size        = sizeof(iceberg_lv2_block_md) * total_blocks + 32;
@@ -491,7 +499,14 @@ iceberg_init(iceberg_table     *table,
       perror("lv3_locks malloc failed");
       exit(1);
    }
+   */
+   
 
+   // Set level2 and level3 metadata pointers to NULL - only allocating level1 blocks
+   table->metadata.lv2_md[0] = NULL;
+   table->metadata.lv3_sizes[0] = NULL;
+   table->metadata.lv3_locks[0] = NULL;
+   
 #ifdef ENABLE_RESIZE
    table->metadata.resize_cnt     = 0;
    table->metadata.lv1_resize_ctr = total_blocks;
@@ -532,20 +547,22 @@ iceberg_init(iceberg_table     *table,
          table->level1[0][i].slots[j].refcount   = 0;
          table->level1[0][i].slots[j].q_refcount = 0;
       }
-
+      /*
       for (uint64_t j = 0; j < C_LV2 + MAX_LG_LG_N / D_CHOICES; ++j) {
          table->level2[0][i].slots[j].key        = NULL_SLICE;
          table->level2[0][i].slots[j].refcount   = 0;
          table->level2[0][i].slots[j].q_refcount = 0;
       }
       table->level3[0]->head = NULL;
+      */
    }
 
    memset((char *)table->metadata.lv1_md[0], 0, lv1_md_size);
+   /*
    memset((char *)table->metadata.lv2_md[0], 0, lv2_md_size);
    memset(table->metadata.lv3_sizes[0], 0, total_blocks * sizeof(uint64_t));
    memset(table->metadata.lv3_locks[0], 0, total_blocks * sizeof(uint8_t));
-
+   */
    table->spl_data_config = spl_data_config;
 
    table->clock_hand = 0;
@@ -1100,6 +1117,10 @@ iceberg_lv2_insert(iceberg_table *table,
                    uint64_t       lv3_index,
                    threadid       thread_id)
 {
+   // If level2 blocks aren't allocated, return false immediately
+   if (table->level2[0] == NULL) {
+      return false;
+   }
 
    iceberg_metadata *metadata = &table->metadata;
 
@@ -2314,7 +2335,7 @@ iceberg_lv2_get_value(iceberg_table *table,
                       uint64_t       lv3_index)
 {
    // printf("tid x %p %s %s\n", (void *)table, __func__, key);
-
+  return false;
 
    iceberg_metadata *metadata = &table->metadata;
 

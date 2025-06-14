@@ -119,7 +119,7 @@ def main(argc, argv):
         -p splinterdb.num_normal_bg_threads {num_normal_bg_threads} \
         -p splinterdb.num_memtable_bg_threads {num_memtable_bg_threads} \
         -p splinterdb.disable_upsert 1 \
-        -p splinterdb.io_contexts_per_process 64'
+        -p splinterdb.io_contexts_per_process 128'
         
     if dev_name.startswith('/dev/'):
         cmd += f' -p splinterdb.disk_size_gb {get_device_size_bytes(dev_name) // (1024**3)}'
@@ -128,26 +128,90 @@ def main(argc, argv):
     cmd += ' -p splinterdb.use_log 0'
 
     backofftime = {
-            '/dev/md127': {
-                60: {
-                    'read': {
-                        'default': 20000,
-                        'tictoc-disk': 20000,
-                        'mvcc-disk': 1500000
-                        },
-                    'write': {
-                        'default': 5000,
-                        'sto-disk': 10000,
-                        'tictoc-disk': 20000,
-                        'mvcc-disk': 1500000
-                        },
-                    'mixed': {
-                        'default': 5000,
-                        'mvcc-disk': 630000
-                        }
-                    }
+        '/dev/md127': {
+            60: {
+                'read': {
+                    'default': 20000,
+                    'tictoc-disk': 20000,
+                    'mvcc-disk': 1500000
+                },
+                'write': {
+                    'default': 5000,
+                    'sto-disk': 10000,
+                    'tictoc-disk': 20000,
+                    'mvcc-disk': 1500000
+                },
+                'mixed': {
+                    'default': 5000,
+                    'mvcc-disk': 630000
                 }
             }
+        },
+        '/dev/nvme0n1': {
+            120: {
+                'read': {
+                    'default': 3000,
+                    'sto-disk': 4000,
+                    'tictoc-disk': 5000,
+                    'mvcc-disk': 320000
+                },
+                'write': {
+                    'default': 2000,
+                    'sto-disk': 3000,
+                    'tictoc-disk': 4000,
+                    'mvcc-disk': 320000
+                },
+                'mixed': {
+                    'default': 2000,
+                    'sto-disk': 2000,
+                    'tictoc-disk': 3000,
+                    'mvcc-disk': 200000
+                }
+            }
+        },
+        '/dev/ram0': {
+            60: {
+                'read': {
+                    'default': 3000,
+                    'sto-disk': 4000,
+                    'tictoc-disk': 5000,
+                    'mvcc-disk': 320000
+                },
+                'write': {
+                    'default': 2000,
+                    'sto-disk': 3000,
+                    'tictoc-disk': 4000,
+                    'mvcc-disk': 320000
+                },
+                'mixed': {
+                    'default': 2000,
+                    'sto-disk': 2000,
+                    'tictoc-disk': 3000,
+                    'mvcc-disk': 200000
+                }
+            },
+            120: {
+                'read': {
+                    'default': 1000,
+                    'sto-disk': 4000,
+                    'tictoc-disk': 5000,
+                    'mvcc-disk': 320000
+                },
+                'write': {
+                    'default': 1000,
+                    'sto-disk': 2000,
+                    'tictoc-disk': 2000,
+                    'mvcc-disk': 320000
+                },
+                'mixed': {
+                    'default': 2000,
+                    'sto-disk': 2000,
+                    'tictoc-disk': 2000,
+                    'mvcc-disk': 200000
+                }
+            }
+        }
+    }
 
     # No support long_txn now
     if 'read' in conf:
