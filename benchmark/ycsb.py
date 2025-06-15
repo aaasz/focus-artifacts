@@ -152,20 +152,21 @@ def main(argc, argv):
                 'read': {
                     'default': 3000,
                     'sto-disk': 4000,
-                    'tictoc-disk': 5000,
-                    'mvcc-disk': 320000
+                    'tictoc-disk': 8000,
+                    'mvcc-disk': 200000
                 },
                 'write': {
                     'default': 2000,
-                    'sto-disk': 3000,
-                    'tictoc-disk': 4000,
-                    'mvcc-disk': 320000
+                    'mvcc-memory': 8000,
+                    'sto-disk': 4000,
+                    'tictoc-disk': 18000,
+                    'mvcc-disk': 200000
                 },
                 'mixed': {
                     'default': 2000,
-                    'sto-disk': 2000,
-                    'tictoc-disk': 3000,
-                    'mvcc-disk': 200000
+                    'sto-disk': 4000,
+                    'tictoc-disk': 8000,
+                    'mvcc-disk': 320000
                 }
             }
         },
