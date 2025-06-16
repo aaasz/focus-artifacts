@@ -159,8 +159,8 @@ def main(argc, argv):
                     'default': 2000,
                     'mvcc-memory': 8000,
                     'sto-disk': 4000,
-                    'tictoc-disk': 18000,
-                    'mvcc-disk': 200000
+                    'tictoc-disk': 16000,
+                    'mvcc-disk': 420000
                 },
                 'mixed': {
                     'default': 2000,
