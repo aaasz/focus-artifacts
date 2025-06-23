@@ -170,6 +170,29 @@ def main(argc, argv):
                 }
             }
         },
+        '/dev/sda4': {
+            120: {
+                'read': {
+                    'default': 3000,
+                    'sto-disk': 3000,
+                    'tictoc-disk': 4000,
+                    'mvcc-disk': 1000000
+                },
+                'write': {
+                    'default': 2000,
+                    'mvcc-memory': 8000,
+                    'sto-disk': 4000,
+                    'tictoc-disk': 16000,
+                    'mvcc-disk': 1000000
+                },
+                'mixed': {
+                    'default': 2000,
+                    'sto-disk': 3000,
+                    'tictoc-disk': 4000,
+                    'mvcc-disk': 1000000
+                }
+            }
+        },
         '/dev/ram0': {
             60: {
                 'read': {
