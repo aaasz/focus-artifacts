@@ -317,6 +317,12 @@ slot_set_fprint(uint8_t *block_md, int slot, uint8_t fprint)
    block_md[slot] = fprint;
 }
 
+static inline bool
+slot_is_empty(uint8_t *block_md, int slot)
+{
+   return block_md[slot] == 0 || (block_md[slot] == 1 && slot == 56);
+}
+
 static inline void __attribute__((unused))
 atomic_write_128(slice key, ValueType val, uint64_t *slot)
 {
@@ -935,7 +941,7 @@ iceberg_evict(iceberg_table *table, threadid thread_id)
          while (md_mask != 0) {
             const int slot = __builtin_ctzll(md_mask);
             md_mask        = md_mask & ~(1ULL << slot);
-            if (table->metadata.lv1_md[0][hand].block_md[slot] > 0) {
+            if (!slot_is_empty(table->metadata.lv1_md[0][hand].block_md, slot)) {
                if (blocks[hand].slots[slot].refcount == 0) {
                   blocks[hand].slots[slot].refcount = -1;
                } else if (blocks[hand].slots[slot].refcount == -1) {
@@ -984,7 +990,7 @@ iceberg_evict_in_block(iceberg_table *table,
    while (md_mask != 0) {
       const int slot = __builtin_ctzll(md_mask);
       md_mask        = md_mask & ~(1ULL << slot);
-      if (table->metadata.lv1_md[bindex][boffset].block_md[slot] > 0) {
+      if (!slot_is_empty(table->metadata.lv1_md[bindex][boffset].block_md, slot)) {
          if (blocks[boffset].slots[slot].refcount <= 0) {
             if (table->sktch) {
                sketch_insert(table->sktch,
@@ -1356,12 +1362,8 @@ iceberg_insert_internal_with_eviction(iceberg_table *table,
    uint8_t start = 0;
    uint8_t slot  = word_select(md_mask, start);
 
-   bool is_empty_slot = metadata->lv1_md[bindex][boffset].block_md[slot] == 0;
-   is_empty_slot =
-      is_empty_slot
-      || (metadata->lv1_md[bindex][boffset].block_md[slot] == 1 && slot == 56);
-
-   platform_assert(is_empty_slot,
+   platform_assert(slot_is_empty(metadata->lv1_md[bindex][boffset].block_md,
+                                 slot),
                    "overwrite is not allowed\n(key: %s, fprint: %d)\n(block "
                    "key: %s, fprint: %d, slot: %d)\n",
                    (char *)slice_data(key),
@@ -2071,41 +2073,41 @@ iceberg_get_and_remove_with_force(iceberg_table *table,
       }
    }
 
-   platform_default_log("key: %s\n", (char *)slice_data(key));
-   // Scan the entire table to find the key.
-   for (uint64_t i = 0; i < table->metadata.nblocks; ++i) {
-      if (i != boffset) {
-         lock_block((uint64_t *)&metadata->lv1_md[0][i].block_md);
-      }
-      iceberg_lv1_block *blocks = table->level1[0];
-      __mmask64 md_mask = slot_mask_64(metadata->lv1_md[0][i].block_md, 0);
-      md_mask           = ~md_mask;
-      while (md_mask != 0) {
-         const int slot = __builtin_ctzll(md_mask);
-         md_mask        = md_mask & ~(1ULL << slot);
-         if (!slice_is_null(blocks[i].slots[slot].key)) {
-            platform_default_log("key in table: %s\n",
-                                 (char *)slice_data(blocks[i].slots[slot].key));
-         }
-         if (metadata->lv1_md[0][i].block_md[slot] > 0) {
-            if (iceberg_key_compare(
-                   table->spl_data_config, blocks[i].slots[slot].key, key)
-                == 0)
-            {
-               platform_assert(false,
-                               "key found in %lu %d(boffset: %lu)\n",
-                               i,
-                               slot,
-                               boffset);
-            }
-         }
-      }
-      if (i != boffset) {
-         unlock_block((uint64_t *)&metadata->lv1_md[0][i].block_md);
-      }
-   }
+   // platform_default_log("key: %s\n", (char *)slice_data(key));
+   // // Scan the entire table to find the key.
+   // for (uint64_t i = 0; i < table->metadata.nblocks; ++i) {
+   //    if (i != boffset) {
+   //       lock_block((uint64_t *)&metadata->lv1_md[0][i].block_md);
+   //    }
+   //    iceberg_lv1_block *blocks = table->level1[0];
+   //    __mmask64 md_mask = slot_mask_64(metadata->lv1_md[0][i].block_md, 0);
+   //    md_mask           = ~md_mask;
+   //    while (md_mask != 0) {
+   //       const int slot = __builtin_ctzll(md_mask);
+   //       md_mask        = md_mask & ~(1ULL << slot);
+   //       if (!slice_is_null(blocks[i].slots[slot].key)) {
+   //          platform_default_log("key in table: %s\n",
+   //                               (char *)slice_data(blocks[i].slots[slot].key));
+   //       }
+   //       if (!slot_is_empty(metadata->lv1_md[0][i].block_md, slot)) {
+   //          if (iceberg_key_compare(
+   //                 table->spl_data_config, blocks[i].slots[slot].key, key)
+   //              == 0)
+   //          {
+   //             platform_assert(false,
+   //                             "key found in %lu %d(boffset: %lu)\n",
+   //                             i,
+   //                             slot,
+   //                             boffset);
+   //          }
+   //       }
+   //    }
+   //    if (i != boffset) {
+   //       unlock_block((uint64_t *)&metadata->lv1_md[0][i].block_md);
+   //    }
+   // }
 
-   platform_assert(false, "block going to lv2\n");
+   platform_assert(false, "invalid path\n");
 
    // ret = iceberg_lv2_remove(table,
    //                          key,
