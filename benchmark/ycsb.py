@@ -93,7 +93,8 @@ def main(argc, argv):
     max_total_threads = 36
 
     # This is the maximum number of threads that run YCSB clients.
-    max_num_threads = min(os.cpu_count(), max_total_threads)
+    cpu_count = os.cpu_count() or 1
+    max_num_threads = min(cpu_count, max_total_threads)
 
     if enable_bgthreads:
         assert False, "not used"
@@ -133,12 +134,14 @@ def main(argc, argv):
                 'read': {
                     'default': 20000,
                     'tictoc-disk': 20000,
+                    'tictoc-disk-cache': 20000,
                     'mvcc-disk': 1500000
                 },
                 'write': {
                     'default': 5000,
                     'sto-disk': 10000,
                     'tictoc-disk': 20000,
+                    'tictoc-disk-cache': 20000,
                     'mvcc-disk': 1500000
                 },
                 'mixed': {
@@ -153,6 +156,7 @@ def main(argc, argv):
                     'default': 3000,
                     'sto-disk': 4000,
                     'tictoc-disk': 8000,
+                    'tictoc-disk-cache': 8000,
                     'mvcc-disk': 200000
                 },
                 'write': {
@@ -160,12 +164,14 @@ def main(argc, argv):
                     'mvcc-memory': 8000,
                     'sto-disk': 4000,
                     'tictoc-disk': 16000,
+                    'tictoc-disk-cache': 16000,
                     'mvcc-disk': 420000
                 },
                 'mixed': {
                     'default': 2000,
                     'sto-disk': 4000,
                     'tictoc-disk': 8000,
+                    'tictoc-disk-cache': 8000,
                     'mvcc-disk': 320000
                 }
             }
@@ -238,17 +244,20 @@ def main(argc, argv):
     }
 
     # No support long_txn now
-    if 'read' in conf:
+    if conf and 'read' in conf:
         conf_type = 'read'
-    elif 'write' in conf:
+    elif conf and 'write' in conf:
         conf_type = 'write'
     else:
         conf_type = 'mixed'
 
-    if system in backofftime[dev_name][threads][conf_type]:
-        backoff = backofftime[dev_name][threads][conf_type][system]
+    if dev_name not in backofftime:
+        backoff = 2000
     else:
-        backoff = backofftime[dev_name][threads][conf_type]['default']
+        if system in backofftime[dev_name][threads][conf_type]:
+            backoff = backofftime[dev_name][threads][conf_type][system]
+        else:
+            backoff = backofftime[dev_name][threads][conf_type]['default']
 
     cmd += f' -w mintxnabortpaneltyus {backoff}'
 

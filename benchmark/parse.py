@@ -127,6 +127,7 @@ output_filenames = {
     'tictoc-sketch': 'TicToc-FPSketch',
     'tictoc-sketch-lazy': 'TicToc-FPSketch-Lazy',
     'tictoc-counter-lazy': 'TicToc-Counter-Lazy',
+    'tictoc-disk-cache': 'TicToc-Disk-Cache',
     'mvcc-memory': 'MVTO-Memory',
     'mvcc-sketch': 'MVTO-FPSketch',
     'mvcc-sketch-lazy': 'MVTO-FPSketch-lazy',

@@ -83,11 +83,17 @@ typedef void(merge_value_from_sketch_fn)(ValueType *hash_table_value,
                                          ValueType  sketch_value);
 typedef void(transform_sketch_value_fn)(ValueType *hash_table_value,
                                         ValueType  sketch_value);
-typedef void(post_remove_fn)(ValueType *hash_table_value);
+typedef void(post_insert_fn)(slice      hash_table_key,
+                             ValueType *hash_table_value,
+                             void      *external_data);
+typedef void(post_remove_fn)(slice      hash_table_key,
+                             ValueType *hash_table_value,
+                             void      *external_data);
 typedef struct iceberg_config {
    uint64_t                    log_slots;
    merge_value_from_sketch_fn *merge_value_from_sketch;
    transform_sketch_value_fn  *transform_sketch_value;
+   post_insert_fn             *post_insert;
    post_remove_fn             *post_remove;
    bool                        enable_lazy_eviction;
    uint64_t                    max_num_keys;
@@ -106,6 +112,7 @@ typedef struct iceberg_table {
    const data_config *spl_data_config;
    sketch            *sktch;
    uint64_t           clock_hand; // iterate table block by block
+   const void        *external_data;
 } iceberg_table;
 
 uint64_t

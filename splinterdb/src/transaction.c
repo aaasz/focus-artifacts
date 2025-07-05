@@ -23,6 +23,8 @@ typedef struct transaction {
 
 #if EXPERIMENTAL_MODE_TICTOC_DISK
 #   include "transaction_impl/transaction_tictoc_disk.h"
+#elif EXPERIMENTAL_MODE_TICTOC_DISK_CACHE
+#   include "transaction_impl/transaction_tictoc_disk_cache.h"
 #elif EXPERIMENTAL_MODE_TICTOC_MEMORY
 #   include "transaction_impl/transaction_tictoc_memory.h"
 #elif EXPERIMENTAL_MODE_TICTOC_COUNTER

@@ -14,6 +14,7 @@ available_systems = [
     'tictoc-counter-lazy',
     'tictoc-sketch',
     'tictoc-sketch-lazy',
+    'tictoc-disk-cache',
     'sto-disk',
     'sto-sketch',
     'sto-sketch-lazy',
@@ -42,6 +43,7 @@ system_sed_map = {
     'tictoc-counter-lazy': ["sed -i 's/#define EXPERIMENTAL_MODE_TICTOC_COUNTER_LAZY [ ]*0/#define EXPERIMENTAL_MODE_TICTOC_COUNTER_LAZY 1/g' src/experimental_mode.h"],
     'tictoc-sketch': ["sed -i 's/#define EXPERIMENTAL_MODE_TICTOC_SKETCH [ ]*0/#define EXPERIMENTAL_MODE_TICTOC_SKETCH 1/g' src/experimental_mode.h"],
     'tictoc-sketch-lazy': ["sed -i 's/#define EXPERIMENTAL_MODE_TICTOC_SKETCH_LAZY [ ]*0/#define EXPERIMENTAL_MODE_TICTOC_SKETCH_LAZY 1/g' src/experimental_mode.h"],
+    'tictoc-disk-cache': ["sed -i 's/#define EXPERIMENTAL_MODE_TICTOC_DISK_CACHE [ ]*0/#define EXPERIMENTAL_MODE_TICTOC_DISK_CACHE 1/g' src/experimental_mode.h"],
     'sto-disk': ["sed -i 's/#define EXPERIMENTAL_MODE_STO_DISK [ ]*0/#define EXPERIMENTAL_MODE_STO_DISK 1/g' src/experimental_mode.h"],
     'sto-memory': ["sed -i 's/#define EXPERIMENTAL_MODE_STO_MEMORY [ ]*0/#define EXPERIMENTAL_MODE_STO_MEMORY 1/g' src/experimental_mode.h"],
     'sto-sketch': ["sed -i 's/#define EXPERIMENTAL_MODE_STO_SKETCH [ ]*0/#define EXPERIMENTAL_MODE_STO_SKETCH 1/g' src/experimental_mode.h"],
@@ -138,7 +140,7 @@ class ExpSystem:
         with open(splinterdb_dir + "/" + filename, 'w') as f:
             f.writelines(write_lines)
         
-        for filename in ['transaction_sto.h', 'transaction_tictoc_sketch.h', 'transaction_mvcc_sketch.h']:
+        for filename in ['transaction_sto.h', 'transaction_tictoc_sketch.h', 'transaction_mvcc_sketch.h', 'transaction_tictoc_disk_cache.h']:
             filename = f'src/transaction_impl/{filename}'
             run_cmd(f'git checkout -- {filename}')
             with open(splinterdb_dir + "/" + filename, 'r') as f:
