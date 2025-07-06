@@ -173,6 +173,9 @@ def main(argc, argv):
                     'tictoc-disk': 8000,
                     'tictoc-disk-cache': 8000,
                     'mvcc-disk': 320000
+                },
+                'long': {
+                    'mvcc-disk': 320000
                 }
             }
         },
@@ -243,23 +246,22 @@ def main(argc, argv):
         }
     }
 
-    # No support long_txn now
-    if conf and 'read' in conf:
-        conf_type = 'read'
-    elif conf and 'write' in conf:
-        conf_type = 'write'
-    else:
-        conf_type = 'mixed'
+    try:
+        if conf and 'read' in conf:
+            conf_type = 'read'
+        elif conf and 'write' in conf:
+            conf_type = 'write'
+        else:
+            conf_type = 'mixed'
 
-    if dev_name not in backofftime:
-        backoff = 2000
-    else:
         if system in backofftime[dev_name][threads][conf_type]:
             backoff = backofftime[dev_name][threads][conf_type][system]
         else:
             backoff = backofftime[dev_name][threads][conf_type]['default']
 
-    cmd += f' -w mintxnabortpaneltyus {backoff}'
+        cmd += f' -w mintxnabortpaneltyus {backoff}'
+    except: # ignore key error -- use number in the workload spec
+        pass
 
     # run load phase
     # os.system(f'LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so ./ycsbc -db {db} -threads {threads} -L {spec_file} -p splinterdb.filename {dev_name} -p splinterdb.cache_size_mb {cache_size_mb}')
