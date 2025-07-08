@@ -37,6 +37,8 @@ typedef struct transaction {
 #   include "transaction_impl/transaction_tictoc_sketch.h"
 #elif EXPERIMENTAL_MODE_STO_DISK
 #   include "transaction_impl/transaction_sto_disk.h"
+#elif EXPERIMENTAL_MODE_STO_DISK_CACHE
+#   include "transaction_impl/transaction_sto_disk_cache.h"
 #elif EXPERIMENTAL_MODE_STO_MEMORY
 #   include "transaction_impl/transaction_sto_memory.h"
 #elif EXPERIMENTAL_MODE_STO_COUNTER

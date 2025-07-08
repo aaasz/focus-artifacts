@@ -116,6 +116,7 @@ output_filenames = {
     '2pl-no-wait': '2PL',
     'occ-serial': 'KR-OCC',
     'sto-disk': 'STO-Disk',
+    'sto-disk-cache': 'STO-Disk-Cache',
     'sto-memory': 'STO-Memory',
     'sto-counter': 'STO-Counter',
     'sto-sketch': 'STO-FPSketch',
