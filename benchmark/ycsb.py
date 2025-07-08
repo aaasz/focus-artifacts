@@ -140,6 +140,7 @@ def main(argc, argv):
                 'write': {
                     'default': 5000,
                     'sto-disk': 10000,
+                    'sto-disk-cache': 10000,
                     'tictoc-disk': 20000,
                     'tictoc-disk-cache': 20000,
                     'mvcc-disk': 1500000
@@ -155,6 +156,7 @@ def main(argc, argv):
                 'read': {
                     'default': 3000,
                     'sto-disk': 4000,
+                    'sto-disk-cache': 4000,
                     'tictoc-disk': 8000,
                     'tictoc-disk-cache': 8000,
                     'mvcc-disk': 200000
@@ -163,6 +165,7 @@ def main(argc, argv):
                     'default': 2000,
                     'mvcc-memory': 8000,
                     'sto-disk': 4000,
+                    'sto-disk-cache': 4000,
                     'tictoc-disk': 16000,
                     'tictoc-disk-cache': 16000,
                     'mvcc-disk': 420000
@@ -170,6 +173,7 @@ def main(argc, argv):
                 'mixed': {
                     'default': 2000,
                     'sto-disk': 4000,
+                    'sto-disk-cache': 4000,
                     'tictoc-disk': 8000,
                     'tictoc-disk-cache': 8000,
                     'mvcc-disk': 320000
@@ -181,20 +185,26 @@ def main(argc, argv):
                 'read': {
                     'default': 3000,
                     'sto-disk': 3000,
+                    'sto-disk-cache': 3000,
                     'tictoc-disk': 4000,
+                    'tictoc-disk-cache': 4000,
                     'mvcc-disk': 1000000
                 },
                 'write': {
                     'default': 2000,
                     'mvcc-memory': 8000,
                     'sto-disk': 4000,
-                    'tictoc-disk': 16000,
+                    'sto-disk-cache': 4000,
+                    'tictoc-disk': 16000,   
+                    'tictoc-disk-cache': 16000,
                     'mvcc-disk': 1000000
                 },
                 'mixed': {
                     'default': 2000,
                     'sto-disk': 3000,
+                    'sto-disk-cache': 3000,
                     'tictoc-disk': 4000,
+                    'tictoc-disk-cache': 4000,
                     'mvcc-disk': 1000000
                 }
             }
@@ -204,19 +214,25 @@ def main(argc, argv):
                 'read': {
                     'default': 3000,
                     'sto-disk': 4000,
+                    'sto-disk-cache': 4000,
                     'tictoc-disk': 5000,
+                    'tictoc-disk-cache': 5000,
                     'mvcc-disk': 320000
                 },
                 'write': {
                     'default': 2000,
                     'sto-disk': 3000,
+                    'sto-disk-cache': 3000,
                     'tictoc-disk': 4000,
+                    'tictoc-disk-cache': 4000,
                     'mvcc-disk': 320000
                 },
                 'mixed': {
                     'default': 2000,
                     'sto-disk': 2000,
+                    'sto-disk-cache': 2000,
                     'tictoc-disk': 3000,
+                    'tictoc-disk-cache': 3000,
                     'mvcc-disk': 200000
                 }
             },
@@ -224,19 +240,25 @@ def main(argc, argv):
                 'read': {
                     'default': 1000,
                     'sto-disk': 4000,
+                    'sto-disk-cache': 4000,
                     'tictoc-disk': 5000,
+                    'tictoc-disk-cache': 5000,
                     'mvcc-disk': 320000
                 },
                 'write': {
                     'default': 1000,
                     'sto-disk': 2000,
+                    'sto-disk-cache': 2000,
                     'tictoc-disk': 2000,
+                    'tictoc-disk-cache': 2000,
                     'mvcc-disk': 320000
                 },
                 'mixed': {
                     'default': 2000,
                     'sto-disk': 2000,
+                    'sto-disk-cache': 2000,
                     'tictoc-disk': 2000,
+                    'tictoc-disk-cache': 2000,
                     'mvcc-disk': 200000
                 }
             }
