@@ -83,9 +83,9 @@ get_app_value_from_merge_accumulator(merge_accumulator *ma)
 
 static int
 merge_tuple(const data_config *cfg,
-            slice              key,         // IN
-            message            old_message, // IN
-            merge_accumulator *new_message) // IN/OUT
+                   slice              key,         // IN
+                   message            old_message, // IN
+                   merge_accumulator *new_message) // IN/OUT
 {
    if (is_message_tuple_header_update(old_message)) {
       // Just discard
@@ -139,8 +139,8 @@ merge_tuple(const data_config *cfg,
 
 static int
 merge_tuple_final(const data_config *cfg,
-                  slice              key,
-                  merge_accumulator *oldest_message)
+                         slice              key,
+                         merge_accumulator *oldest_message)
 {
    platform_assert(!is_merge_accumulator_tuple_header_update(oldest_message),
                    "oldest_message shouldn't be a rts update\n");
@@ -487,9 +487,11 @@ read_from_splinterdb(slice      hash_table_key,
 {
    iceberg_external_data *external_data_ =
       (iceberg_external_data *)external_data;
-   timestamp_set *ts = (timestamp_set *)hash_table_value;
-   get_global_timestamps(
-      external_data_->kvsb, hash_table_key, &ts->wts, &ts->rts);
+   timestamp_set       *ts  = (timestamp_set *)hash_table_value;
+   txn_timestamp_ondisk wts = 0, rts = 0;
+   get_global_timestamps(external_data_->kvsb, hash_table_key, &wts, &rts);
+   ts->wts = wts;
+   ts->rts = rts;
 }
 
 static void
@@ -499,10 +501,12 @@ update_timestamp_to_splinterdb(slice      hash_table_key,
 {
    iceberg_external_data *external_data_ =
       (iceberg_external_data *)external_data;
-   timestamp_set *ts    = (timestamp_set *)hash_table_value;
-   tuple_header   tuple = {
-        .wts = ts->wts,
-        .rts = ts->rts,
+   timestamp_set       *ts    = (timestamp_set *)hash_table_value;
+   txn_timestamp_ondisk wts   = ts->wts;
+   txn_timestamp_ondisk rts   = ts->rts;
+   tuple_header         tuple = {
+              .wts = wts,
+              .rts = rts,
    };
 
    splinterdb_update(external_data_->kvsb,
@@ -855,8 +859,7 @@ transactional_splinterdb_lookup(transactional_splinterdb *txn_kvsb,
       rc = splinterdb_lookup(txn_kvsb->kvsb, entry->key, result);
 
       if (splinterdb_lookup_found(result)) {
-         _splinterdb_lookup_result *_result =
-            (_splinterdb_lookup_result *)result;
+         _splinterdb_lookup_result *_result = (_splinterdb_lookup_result *)result;
          tuple_header *tuple =
             (tuple_header *)merge_accumulator_data(&_result->value);
 
