@@ -134,6 +134,7 @@ output_filenames = {
     'mvcc-sketch-lazy': 'MVTO-FPSketch-lazy',
     'mvcc-counter': 'MVTO-Counter',
     'mvcc-disk': 'MVTO-Disk',
+    'mvcc-disk-cache': 'MVTO-Disk-Cache',
     'mvcc-counter-lazy': 'MVTO-Counter-Lazy',
 }
 

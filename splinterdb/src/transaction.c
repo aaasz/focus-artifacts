@@ -51,6 +51,8 @@ typedef struct transaction {
 #   include "transaction_impl/transaction_sto.h"
 #elif EXPERIMENTAL_MODE_MVCC_DISK
 #   include "transaction_impl/transaction_mvcc_disk.h"
+#elif EXPERIMENTAL_MODE_MVCC_DISK_CACHE
+#   include "transaction_impl/transaction_mvcc_disk_cache.h"
 #elif EXPERIMENTAL_MODE_MVCC_MEMORY
 #   include "transaction_impl/transaction_mvcc_memory.h"
 #elif EXPERIMENTAL_MODE_MVCC_COUNTER
