@@ -37,7 +37,7 @@ typedef struct transactional_splinterdb {
 
 #define MVCC_VERSION_LATEST 0
 #define MVCC_VERSION_START  1
-#define MVCC_TIMESTAMP_INF  ((txn_timestamp)-1)
+#define MVCC_TIMESTAMP_INF  ((txn_timestamp) - 1)
 
 typedef struct ONDISK mvcc_key_header {
    uint32 version_number;
@@ -580,7 +580,9 @@ sketch_item_to_hash_table_item(ValueType *hash_table_item,
 // It deallocates the version list in the critical section of the
 // iceberg_remove.
 static void
-free_version_list(ValueType *hash_table_item)
+free_version_list(slice      hash_table_key,
+                  ValueType *hash_table_item,
+                  void      *external_data)
 {
    // Clean up all nodes in the list when evicting the key from the cache.
    list_node *head = (list_node *)hash_table_item;
