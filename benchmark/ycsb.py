@@ -159,7 +159,8 @@ def main(argc, argv):
                     'sto-disk-cache': 4000,
                     'tictoc-disk': 8000,
                     'tictoc-disk-cache': 8000,
-                    'mvcc-disk': 200000
+                    'mvcc-disk': 200000,
+                    'mvcc-disk-cache': 200000
                 },
                 'write': {
                     'default': 2000,
@@ -168,7 +169,8 @@ def main(argc, argv):
                     'sto-disk-cache': 4000,
                     'tictoc-disk': 16000,
                     'tictoc-disk-cache': 16000,
-                    'mvcc-disk': 420000
+                    'mvcc-disk': 420000,
+                    'mvcc-disk-cache': 420000
                 },
                 'mixed': {
                     'default': 2000,
@@ -176,7 +178,8 @@ def main(argc, argv):
                     'sto-disk-cache': 4000,
                     'tictoc-disk': 8000,
                     'tictoc-disk-cache': 8000,
-                    'mvcc-disk': 320000
+                    'mvcc-disk': 320000,
+                    'mvcc-disk-cache': 320000
                 }
             }
         },
