@@ -144,7 +144,7 @@ class ExpSystem:
         with open(splinterdb_dir + "/" + filename, 'w') as f:
             f.writelines(write_lines)
         
-        for filename in ['transaction_sto.h', 'transaction_tictoc_sketch.h', 'transaction_mvcc_sketch.h', 'transaction_tictoc_disk_cache.h']:
+        for filename in ['transaction_sto.h', 'transaction_tictoc_sketch.h', 'transaction_mvcc_sketch.h', 'transaction_tictoc_disk_cache.h', 'transaction_sto_disk_cache.h', 'transaction_mvcc_disk_cache.h']:
             filename = f'src/transaction_impl/{filename}'
             run_cmd(f'git checkout -- {filename}')
             with open(splinterdb_dir + "/" + filename, 'r') as f:
