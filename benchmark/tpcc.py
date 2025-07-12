@@ -117,19 +117,23 @@ def main(argc, argv):
     if dev_name.startswith('/dev/'):
         cmd += f' -p splinterdb.disk_size_gb {(get_device_size_bytes(dev_name) // (1024**3))}'
 
-    if system == 'mvcc-disk':
-        # if conf.startswith('tpcc-wh4'):
-        #     abort_penalty_us = 3000
-        # elif conf.startswith('tpcc-wh8'):
-        #     abort_penalty_us = 6000
-        # elif conf.startswith('tpcc-wh16'):
-        #     abort_penalty_us = 12000
-        # elif conf.startswith('tpcc-wh32'):
-        #     abort_penalty_us = 24000
-        # else:
-        #     assert False, f'Invalid workload {conf}'
-        abort_penalty_us = 4000
-    else:
+    backofftime = {
+        '/dev/nvme0n1': {
+            120: {
+                'tpcc-wh4': {
+                    'sto-disk': 4000,
+                    'sto-disk-cache': 4000,
+                    'tictoc-disk': 4000,
+                    'tictoc-disk-cache': 4000,
+                    'mvcc-disk': 8000,
+                    'mvcc-disk-cache': 5000,
+                },
+            }
+        }
+    }
+    try:
+        abort_penalty_us = backofftime[dev_name][threads][conf][system]
+    except KeyError:
         abort_penalty_us = 2000
     cmd += f' -w abort_penalty_us {abort_penalty_us}'
 
