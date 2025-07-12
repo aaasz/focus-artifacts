@@ -159,18 +159,17 @@ def main(argc, argv):
                     'sto-disk-cache': 4000,
                     'tictoc-disk': 8000,
                     'tictoc-disk-cache': 8000,
-                    'mvcc-disk': 200000,
-                    'mvcc-disk-cache': 4000
+                    'mvcc-disk': 230000,
+                    'mvcc-disk-cache': 6000
                 },
                 'write': {
                     'default': 2000,
-                    'mvcc-memory': 8000,
                     'sto-disk': 4000,
                     'sto-disk-cache': 4000,
                     'tictoc-disk': 16000,
                     'tictoc-disk-cache': 16000,
-                    'mvcc-disk': 420000,
-                    'mvcc-disk-cache': 8000
+                    'mvcc-disk': 110000,
+                    'mvcc-disk-cache': 4500
                 },
                 'mixed': {
                     'default': 2000,
@@ -178,8 +177,11 @@ def main(argc, argv):
                     'sto-disk-cache': 4000,
                     'tictoc-disk': 8000,
                     'tictoc-disk-cache': 8000,
-                    'mvcc-disk': 320000,
-                    'mvcc-disk-cache': 4000
+                    'mvcc-disk': 420000,
+                    'mvcc-disk-cache': 8000
+                },
+                'long': {
+                    'mvcc-disk': 4000
                 }
             }
         },
@@ -268,23 +270,27 @@ def main(argc, argv):
         }
     }
 
-    # No support long_txn now
-    if conf and 'read' in conf:
-        conf_type = 'read'
-    elif conf and 'write' in conf:
-        conf_type = 'write'
-    else:
-        conf_type = 'mixed'
+    try:
+        # No support long_txn now
+        if conf and 'read' in conf:
+            conf_type = 'read'
+        elif conf and 'write' in conf:
+            conf_type = 'write'
+        elif conf and 'mixed' in conf:
+            conf_type = 'mixed'
+        elif conf and 'long' in conf:
+            conf_type = 'long'
+        else:
+            raise "Invalid configuration"
 
-    if dev_name not in backofftime:
-        backoff = 2000
-    else:
         if system in backofftime[dev_name][threads][conf_type]:
             backoff = backofftime[dev_name][threads][conf_type][system]
         else:
             backoff = backofftime[dev_name][threads][conf_type]['default']
 
-    cmd += f' -w mintxnabortpaneltyus {backoff}'
+        cmd += f' -w mintxnabortpaneltyus {backoff}'
+    except:
+        pass
 
     # run load phase
     # os.system(f'LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so ./ycsbc -db {db} -threads {threads} -L {spec_file} -p splinterdb.filename {dev_name} -p splinterdb.cache_size_mb {cache_size_mb}')

@@ -206,8 +206,10 @@ merge_tuple_final(const data_config *cfg,
                   slice              key,
                   merge_accumulator *oldest_message)
 {
-   platform_assert(!is_merge_accumulator_tuple_header_update(oldest_message),
-                   "oldest_message shouldn't be a rts update\n");
+  if (is_merge_accumulator_tuple_header_update(oldest_message)) {
+    // Just discard
+    return 0;
+  }
 
    message oldest_message_value =
       get_app_value_from_merge_accumulator(oldest_message);
