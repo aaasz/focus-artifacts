@@ -347,6 +347,7 @@ transactional_splinterdb_config_init(
       num_active_keys_per_txn * MAX_THREADS;
    const int cache_or_sketch_size_bytes = 32 * 1024;
 #if EXPERIMENTAL_MODE_STO_COUNTER
+   (void)cache_or_sketch_size_bytes; // To make the compiler quiet
    txn_splinterdb_cfg->sktch_config.rows = 1;
    txn_splinterdb_cfg->sktch_config.cols = 1;
 #elif EXPERIMENTAL_MODE_STO_COUNTER_LAZY
