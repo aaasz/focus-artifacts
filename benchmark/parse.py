@@ -116,6 +116,7 @@ output_filenames = {
     '2pl-no-wait': '2PL',
     'occ-serial': 'KR-OCC',
     'sto-disk': 'STO-Disk',
+    'sto-disk-cache': 'STO-Disk-Cache',
     'sto-memory': 'STO-Memory',
     'sto-counter': 'STO-Counter',
     'sto-sketch': 'STO-FPSketch',
@@ -133,6 +134,7 @@ output_filenames = {
     'mvcc-sketch-lazy': 'MVTO-FPSketch-lazy',
     'mvcc-counter': 'MVTO-Counter',
     'mvcc-disk': 'MVTO-Disk',
+    'mvcc-disk-cache': 'MVTO-Disk-Cache',
     'mvcc-counter-lazy': 'MVTO-Counter-Lazy',
 }
 

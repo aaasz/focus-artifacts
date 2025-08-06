@@ -20,7 +20,6 @@ typedef struct transactional_splinterdb_config {
    transactional_data_config   txn_data_cfg;
    transaction_isolation_level isol_level;
    iceberg_config              iceberght_config;
-   sketch_config               sktch_config;
    bool                        is_upsert_disabled;
 } transactional_splinterdb_config;
 
@@ -105,6 +104,150 @@ mvcc_key_compare(const data_config *cfg, slice key1, slice key2)
    } else {
       return 0;
    }
+}
+
+typedef uint32 txn_timestamp_ondisk;
+
+// CAVEAT: the timstamp bits used by disk and cache are different.
+typedef struct ONDISK tuple_header {
+   txn_timestamp_ondisk wts;
+   txn_timestamp_ondisk rts;
+   char                 value[];
+} tuple_header;
+
+static inline bool
+is_message_tuple_header_update(message msg)
+{
+   return message_length(msg) == sizeof(tuple_header);
+}
+
+static inline bool
+is_merge_accumulator_tuple_header_update(merge_accumulator *ma)
+{
+   return merge_accumulator_length(ma) == sizeof(tuple_header);
+}
+
+static inline message
+get_app_value_from_message(message msg)
+{
+   return message_create(
+      message_class(msg),
+      slice_create(message_length(msg) - sizeof(tuple_header),
+                   message_data(msg) + sizeof(tuple_header)));
+}
+
+static inline message
+get_app_value_from_merge_accumulator(merge_accumulator *ma)
+{
+   return message_create(
+      merge_accumulator_message_class(ma),
+      slice_create(merge_accumulator_length(ma) - sizeof(tuple_header),
+                   merge_accumulator_data(ma) + sizeof(tuple_header)));
+}
+
+static int
+merge_tuple(const data_config *cfg,
+            slice              key,         // IN
+            message            old_message, // IN
+            merge_accumulator *new_message) // IN/OUT
+{
+   if (is_message_tuple_header_update(old_message)) {
+      // Just discard
+      return 0;
+   }
+
+   if (is_merge_accumulator_tuple_header_update(new_message)) {
+      tuple_header *new_tuple =
+         (tuple_header *)merge_accumulator_data(new_message);
+      txn_timestamp_ondisk new_rts = new_tuple->rts;
+      txn_timestamp_ondisk new_wts = new_tuple->wts;
+      merge_accumulator_copy_message(new_message, old_message);
+      new_tuple      = (tuple_header *)merge_accumulator_data(new_message);
+      new_tuple->rts = new_rts;
+      new_tuple->wts = new_wts;
+
+      return 0;
+   }
+
+   message old_value_message = get_app_value_from_message(old_message);
+   message new_value_message =
+      get_app_value_from_merge_accumulator(new_message);
+
+   merge_accumulator new_value_ma;
+   merge_accumulator_init_from_message(
+      &new_value_ma,
+      new_message->data.heap_id,
+      new_value_message); // FIXME: use a correct heap_id
+
+   data_merge_tuples(
+      ((const transactional_data_config *)cfg)->application_data_cfg,
+      key_create_from_slice(key),
+      old_value_message,
+      &new_value_ma);
+
+   merge_accumulator_resize(new_message,
+                            sizeof(tuple_header)
+                               + merge_accumulator_length(&new_value_ma));
+
+   tuple_header *new_tuple = merge_accumulator_data(new_message);
+   memcpy(&new_tuple->value,
+          merge_accumulator_data(&new_value_ma),
+          merge_accumulator_length(&new_value_ma));
+
+   merge_accumulator_deinit(&new_value_ma);
+
+   merge_accumulator_set_class(new_message, message_class(old_message));
+
+   return 0;
+}
+
+static int
+merge_tuple_final(const data_config *cfg,
+                  slice              key,
+                  merge_accumulator *oldest_message)
+{
+  if (is_merge_accumulator_tuple_header_update(oldest_message)) {
+    // Just discard
+    return 0;
+  }
+
+   message oldest_message_value =
+      get_app_value_from_merge_accumulator(oldest_message);
+   merge_accumulator app_oldest_message;
+   merge_accumulator_init_from_message(
+      &app_oldest_message,
+      app_oldest_message.data.heap_id, // FIXME: use a correct heap id
+      oldest_message_value);
+
+   data_merge_tuples_final(
+      ((const transactional_data_config *)cfg)->application_data_cfg,
+      key_create_from_slice(key),
+      &app_oldest_message);
+
+   merge_accumulator_resize(oldest_message,
+                            sizeof(tuple_header)
+                               + merge_accumulator_length(&app_oldest_message));
+   tuple_header *tuple = merge_accumulator_data(oldest_message);
+   memcpy(&tuple->value,
+          merge_accumulator_data(&app_oldest_message),
+          merge_accumulator_length(&app_oldest_message));
+
+   merge_accumulator_deinit(&app_oldest_message);
+
+   return 0;
+}
+
+static void
+transactional_data_config_init(data_config               *in_cfg, // IN
+                               transactional_data_config *out_cfg // OUT
+)
+{
+   memcpy(&out_cfg->super, in_cfg, sizeof(out_cfg->super));
+   out_cfg->super.merge_tuples       = merge_tuple;
+   out_cfg->super.merge_tuples_final = merge_tuple_final;
+   out_cfg->super.key_compare        = mvcc_key_compare;
+   out_cfg->super.max_key_size += sizeof(mvcc_key_header);
+   out_cfg->application_data_cfg = in_cfg;
 }
 
 typedef struct {
@@ -381,11 +524,12 @@ rw_entry_destroy(rw_entry *entry)
 static inline void
 rw_entry_set_msg(rw_entry *e, message msg)
 {
-   char *msg_buf;
-   msg_buf = TYPED_ARRAY_ZALLOC(0, msg_buf, message_length(msg));
-   memcpy(msg_buf, message_data(msg), message_length(msg));
-   e->msg = message_create(message_class(msg),
-                           slice_create(message_length(msg), msg_buf));
+   uint64 msg_len = sizeof(tuple_header) + message_length(msg);
+   char  *msg_buf;
+   msg_buf = TYPED_ARRAY_ZALLOC(0, msg_buf, msg_len);
+   memcpy(
+      msg_buf + sizeof(tuple_header), message_data(msg), message_length(msg));
+   e->msg = message_create(message_class(msg), slice_create(msg_len, msg_buf));
 }
 
 static inline bool
@@ -517,82 +661,103 @@ rw_entry_iceberg_remove(transactional_splinterdb *txn_kvsb,
    }
 }
 
-typedef struct sketch_value {
-   txn_timestamp wts;
-   txn_timestamp rts;
-} sketch_value;
 
 static void
-sketch_insert_timestamps(ValueType *current_value, ValueType new_value)
+get_global_timestamps(const splinterdb     *kvsb,
+                      slice                 key,
+                      txn_timestamp_ondisk *wts,
+                      txn_timestamp_ondisk *rts)
 {
-   sketch_value *current_timestamps = (sketch_value *)current_value;
-   list_node    *latest_version     = ((list_node *)&new_value)->next;
-   // platform_default_log("%s latest_version->meta->rts %lu,
-   // latest_version->meta->wts_min %lu\n", __func__,
-   // (uint64)latest_version->meta->rts, (uint64)latest_version->meta->wts_min);
-   current_timestamps->wts =
-      MAX(current_timestamps->wts, latest_version->meta->wts_min);
-   current_timestamps->rts =
-      MAX(current_timestamps->rts, latest_version->meta->rts);
-   // platform_default_log("insert timestamps rts %lu wts %lu to sketch\n",
-   // (uint64)current_timestamps->rts, (uint64)current_timestamps->wts);
-}
+   splinterdb_lookup_result result;
+   splinterdb_lookup_result_init(kvsb, &result, 0, NULL);
 
-static void
-sketch_merge_timestamps_to_cache(ValueType *hash_table_item,
-                                 ValueType  sketch_item)
-{
-   list_node    *head     = (list_node *)hash_table_item;
-   sketch_value *new_node = (sketch_value *)&sketch_item;
-   head->meta->wts_min    = MAX(head->meta->wts_min, new_node->wts);
-   head->meta->rts        = MAX(head->meta->rts, new_node->rts);
-   // platform_default_log("insert timestamps rts %lu wts %lu to cache\n",
-   // (uint64)hash_table_node->meta->rts,
-   // (uint64)hash_table_node->meta->wts_min);
-}
+   splinterdb_lookup(kvsb, key, &result);
 
-static void
-sketch_get_timestamps(ValueType current_value, ValueType *new_value)
-{
-   sketch_value *current_timestamps = (sketch_value *)&current_value;
-   sketch_value *new_timestamps     = (sketch_value *)new_value;
-   new_timestamps->wts = MIN(current_timestamps->wts, new_timestamps->wts);
-   new_timestamps->rts = MIN(current_timestamps->rts, new_timestamps->rts);
-}
-
-static void
-sketch_item_to_hash_table_item(ValueType *hash_table_item,
-                               ValueType  sketch_item)
-{
-   // list_node *hash_table_node = (list_node *)hash_table_item;
-   // sketch_value *sketch_timestamps     = (sketch_value *)&sketch_item;
-   // if (hash_table_node->meta == NULL) {
-   //    list_node_init(hash_table_node, sketch_timestamps->rts,
-   //    sketch_timestamps->wts, MVCC_TIMESTAMP_INF);
-   //    // platform_default_log("Timestamps from sketch to cache: rts %lu wts
-   //    %lu\n",
-   //    // (uint64)sketch_timestamps->rts, (uint64)sketch_timestamps->wts);
-   // } else {
-   platform_assert(FALSE, "not used for now");
-   // }
-}
-
-// It deallocates the version list in the critical section of the
-// iceberg_remove.
-static void
-free_version_list(slice      hash_table_key,
-                  ValueType *hash_table_item,
-                  void      *external_data)
-{
-   // Clean up all nodes in the list when evicting the key from the cache.
-   list_node *head = (list_node *)hash_table_item;
-   list_node *node = head->next;
-   while (node != NULL) {
-      list_node *next = node->next;
-      list_node_destroy(node);
-      node = next;
+   if (splinterdb_lookup_found(&result)) {
+      _splinterdb_lookup_result *_result = (_splinterdb_lookup_result *)&result;
+      tuple_header *tuple = merge_accumulator_data(&_result->value);
+      if (wts) {
+         *wts = tuple->wts;
+      }
+      if (rts) {
+         *rts = tuple->rts;
+      }
+   } else {
+      if (wts) {
+         *wts = 0;
+      }
+      if (rts) {
+         *rts = 0;
+      }
    }
-   memset(head, 0, sizeof(*head));
+   splinterdb_lookup_result_deinit(&result);
+}
+
+typedef struct iceberg_external_data {
+   const splinterdb *kvsb;
+} iceberg_external_data;
+
+
+static void
+read_from_splinterdb(slice      hash_table_key,
+                     ValueType *hash_table_value,
+                     void      *external_data)
+{
+   // Read the timestamps of V0 in the splinterdb. Set timestamps into
+   // head's meta so that it can be copied to the first node later.
+   iceberg_external_data *external_data_ =
+      (iceberg_external_data *)external_data;
+   list_node *head = (list_node *)hash_table_value;
+   platform_assert(head->next == NULL);
+   platform_assert(head->meta != NULL, "head->meta should not be NULL\n");
+   txn_timestamp_ondisk wts = 0, rts = 0;
+   slice                latest_key =
+      mvcc_key_create_slice(hash_table_key, MVCC_VERSION_LATEST);
+   get_global_timestamps(external_data_->kvsb, latest_key, &wts, &rts);
+   head->meta->wts_max = MVCC_TIMESTAMP_INF;
+   head->meta->wts_min = wts;
+   head->meta->rts     = rts;
+}
+
+static void
+update_timestamp_to_splinterdb(slice      hash_table_key,
+                               ValueType *hash_table_value,
+                               void      *external_data)
+{
+   {
+      // Update the timestamps of V0 in the splinterdb.
+      iceberg_external_data *external_data_ =
+         (iceberg_external_data *)external_data;
+      list_node *head                = (list_node *)hash_table_value;
+      list_node *latest_version_node = head->next;
+      platform_assert(latest_version_node != NULL,
+                      "latest_version_node should not be NULL\n");
+      platform_assert(latest_version_node->meta != NULL,
+                      "latest_version_node->meta should not be NULL\n");
+      txn_timestamp_ondisk wts   = latest_version_node->meta->wts_min;
+      txn_timestamp_ondisk rts   = latest_version_node->meta->rts;
+      tuple_header         tuple = {
+                 .wts = wts,
+                 .rts = rts,
+      };
+      slice latest_key =
+         mvcc_key_create_slice(hash_table_key, MVCC_VERSION_LATEST);
+
+      splinterdb_update(external_data_->kvsb,
+                        latest_key,
+                        slice_create(sizeof(tuple_header), (char *)&tuple));
+   }
+   {
+      // Clean up all nodes in the list when evicting the key from the cache.
+      list_node *head = (list_node *)hash_table_value;
+      list_node *node = head->next;
+      while (node != NULL) {
+         list_node *next = node->next;
+         list_node_destroy(node);
+         node = next;
+      }
+      memset(head, 0, sizeof(*head));
+   }
 }
 
 static void
@@ -605,72 +770,37 @@ transactional_splinterdb_config_init(
           sizeof(txn_splinterdb_cfg->kvsb_cfg));
 
    txn_splinterdb_cfg->txn_data_cfg.application_data_cfg = kvsb_cfg->data_cfg;
-   memcpy(&txn_splinterdb_cfg->txn_data_cfg.super,
-          kvsb_cfg->data_cfg,
-          sizeof(txn_splinterdb_cfg->txn_data_cfg.super));
-   txn_splinterdb_cfg->txn_data_cfg.super.key_compare = mvcc_key_compare;
-   txn_splinterdb_cfg->txn_data_cfg.super.max_key_size +=
-      sizeof(mvcc_key_header);
+   transactional_data_config_init(kvsb_cfg->data_cfg,
+                                  &txn_splinterdb_cfg->txn_data_cfg);
    txn_splinterdb_cfg->kvsb_cfg.data_cfg =
       (data_config *)&txn_splinterdb_cfg->txn_data_cfg;
 
    iceberg_config_default_init(&txn_splinterdb_cfg->iceberght_config);
-   txn_splinterdb_cfg->iceberght_config.merge_value_from_sketch =
-      &sketch_merge_timestamps_to_cache;
-   txn_splinterdb_cfg->iceberght_config.transform_sketch_value =
-      &sketch_item_to_hash_table_item;
-   txn_splinterdb_cfg->iceberght_config.post_remove = &free_version_list;
 
    // TODO things like filename, logfile, or data_cfg would need a
    // deep-copy
    txn_splinterdb_cfg->isol_level = TRANSACTION_ISOLATION_LEVEL_SERIALIZABLE;
    txn_splinterdb_cfg->is_upsert_disabled = FALSE;
 
-   sketch_config_default_init(&txn_splinterdb_cfg->sktch_config);
-   txn_splinterdb_cfg->sktch_config.insert_value_fn = &sketch_insert_timestamps;
-   txn_splinterdb_cfg->sktch_config.get_value_fn    = &sketch_get_timestamps;
-
    const int num_active_keys_per_txn = 16;
    txn_splinterdb_cfg->iceberght_config.max_num_keys =
       num_active_keys_per_txn * MAX_THREADS;
    const int cache_or_sketch_size_bytes = 32 * 1024;
-#if EXPERIMENTAL_MODE_MVCC_COUNTER
-   (void)cache_or_sketch_size_bytes; // To make the compiler quiet
-   txn_splinterdb_cfg->sktch_config.rows = 1;
-   txn_splinterdb_cfg->sktch_config.cols = 1;
-#elif EXPERIMENTAL_MODE_MVCC_COUNTER_LAZY
    const int key_timestamp_size =
       txn_splinterdb_cfg->kvsb_cfg.data_cfg->max_key_size
       + sizeof(txn_timestamp);
    const int num_keys_for_cache =
       (int)ceil((double)cache_or_sketch_size_bytes / key_timestamp_size);
    txn_splinterdb_cfg->iceberght_config.max_num_keys += num_keys_for_cache;
-   txn_splinterdb_cfg->sktch_config.rows                     = 1;
-   txn_splinterdb_cfg->sktch_config.cols                     = 1;
    txn_splinterdb_cfg->iceberght_config.enable_lazy_eviction = TRUE;
    platform_default_log(
       "txn_splinterdb_cfg->iceberght_config.max_num_keys: %lu\n",
       txn_splinterdb_cfg->iceberght_config.max_num_keys);
-#elif EXPERIMENTAL_MODE_MVCC_SKETCH
-   txn_splinterdb_cfg->sktch_config.rows = 2;
-   txn_splinterdb_cfg->sktch_config.cols =
-      (cache_or_sketch_size_bytes / txn_splinterdb_cfg->sktch_config.rows)
-      / sizeof(txn_timestamp);
-   platform_default_log("txn_splinterdb_cfg->sktch_config.cols: %lu\n",
-                        txn_splinterdb_cfg->sktch_config.cols);
-#elif EXPERIMENTAL_MODE_MVCC_SKETCH_LAZY
-   txn_splinterdb_cfg->iceberght_config.max_num_keys += 410;
-   txn_splinterdb_cfg->sktch_config.rows = 2;
-   txn_splinterdb_cfg->sktch_config.cols =
-      ((cache_or_sketch_size_bytes / txn_splinterdb_cfg->sktch_config.rows)
-       / sizeof(txn_timestamp))
-      / 2;
-   txn_splinterdb_cfg->iceberght_config.enable_lazy_eviction = TRUE;
-#else
-#   error "Invalid experimental mode"
-#endif
    txn_splinterdb_cfg->iceberght_config.log_slots = (int)ceil(
       log2(7 * (double)txn_splinterdb_cfg->iceberght_config.max_num_keys));
+   txn_splinterdb_cfg->iceberght_config.post_insert = read_from_splinterdb;
+   txn_splinterdb_cfg->iceberght_config.post_remove =
+      update_timestamp_to_splinterdb;
 }
 
 // static void
@@ -755,12 +885,14 @@ transactional_splinterdb_create_or_open(const splinterdb_config   *kvsb_cfg,
 
    iceberg_table *tscache;
    tscache = TYPED_ZALLOC(0, tscache);
-   platform_assert(
-      iceberg_init_with_sketch(tscache,
-                               &txn_splinterdb_cfg->iceberght_config,
-                               kvsb_cfg->data_cfg,
-                               &txn_splinterdb_cfg->sktch_config)
-      == 0);
+   platform_assert(iceberg_init(tscache,
+                                &txn_splinterdb_cfg->iceberght_config,
+                                kvsb_cfg->data_cfg)
+                   == 0);
+   iceberg_external_data *external_data = TYPED_ZALLOC(0, external_data);
+   external_data->kvsb                  = _txn_kvsb->kvsb;
+   tscache->external_data               = (void *)external_data;
+
    _txn_kvsb->tscache = tscache;
 
    *txn_kvsb = _txn_kvsb;
@@ -788,8 +920,10 @@ void
 transactional_splinterdb_close(transactional_splinterdb **txn_kvsb)
 {
    transactional_splinterdb *_txn_kvsb = *txn_kvsb;
-   splinterdb_close(&_txn_kvsb->kvsb);
+
    iceberg_print_state(_txn_kvsb->tscache);
+
+   splinterdb_close(&_txn_kvsb->kvsb);
 
    platform_free(0, _txn_kvsb->tscache);
    platform_free(0, _txn_kvsb->tcfg);
@@ -883,6 +1017,15 @@ transactional_splinterdb_commit(transactional_splinterdb *txn_kvsb,
             w->msg = merge_accumulator_to_message(&new_message);
             splinterdb_lookup_result_deinit(&result);
          }
+      }
+
+      {
+         tuple_header tuple = {
+            .wts = txn->ts,
+            .rts = txn->ts,
+         };
+         tuple_header *msg = (tuple_header *)message_data(w->msg);
+         memcpy(msg, &tuple, sizeof(tuple));
       }
 
       {
@@ -1056,10 +1199,17 @@ non_transactional_splinterdb_insert(const splinterdb *kvsb,
 {
    int rc;
    {
-      slice spl_key = mvcc_key_create_slice(user_key, MVCC_VERSION_LATEST);
-      rc            = splinterdb_insert(kvsb, spl_key, value);
+      slice  spl_key   = mvcc_key_create_slice(user_key, MVCC_VERSION_LATEST);
+      uint64 value_len = sizeof(tuple_header) + slice_length(value);
+      char  *value_buf;
+      value_buf = TYPED_ARRAY_ZALLOC(0, value_buf, value_len);
+      memcpy(value_buf + sizeof(tuple_header),
+             slice_data(value),
+             slice_length(value));
+      rc = splinterdb_insert(kvsb, spl_key, slice_create(value_len, value_buf));
       platform_assert(rc == 0, "Error from SplinterDB: %d\n", rc);
       mvcc_key_destroy_slice(spl_key);
+      platform_free(0, value_buf);
    }
    return rc;
 }
@@ -1155,6 +1305,16 @@ transactional_splinterdb_lookup(transactional_splinterdb *txn_kvsb,
    int rc = splinterdb_lookup(txn_kvsb->kvsb, spl_key, result);
    platform_assert(rc == 0);
    // platform_assert(splinterdb_lookup_found(result));
+   if (splinterdb_lookup_found(result)) {
+      _splinterdb_lookup_result *_result = (_splinterdb_lookup_result *)result;
+      tuple_header              *tuple =
+         (tuple_header *)merge_accumulator_data(&_result->value);
+
+      const size_t value_len =
+         merge_accumulator_length(&_result->value) - sizeof(tuple_header);
+      memmove(merge_accumulator_data(&_result->value), tuple->value, value_len);
+      merge_accumulator_resize(&_result->value, value_len);
+   }
    readable_version->meta->rts = txn->ts;
    mvcc_key_destroy_slice(spl_key);
 

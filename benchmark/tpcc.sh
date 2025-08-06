@@ -1,6 +1,6 @@
 #!/usr/bin/bash -x
 
-SYSTEMS=(2pl-no-wait occ-serial sto-disk sto-memory sto-sketch sto-counter-lazy tictoc-disk tictoc-memory tictoc-sketch tictoc-counter-lazy mvcc-memory mvcc-sketch mvcc-disk mvcc-counter-lazy)
+SYSTEMS=(2pl-no-wait occ-serial sto-disk sto-memory sto-sketch sto-counter-lazy tictoc-disk tictoc-memory tictoc-sketch tictoc-counter-lazy mvcc-memory mvcc-sketch mvcc-disk mvcc-counter-lazy tictoc-disk-cache sto-disk-cache mvcc-disk-cache)
 WORKLOADS=(tpcc-wh4 tpcc-wh8 tpcc-wh16 tpcc-wh32)
 
 LOG_DIR=../tpcc_logs

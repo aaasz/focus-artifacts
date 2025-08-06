@@ -11,6 +11,18 @@
 #include <math.h>
 #include "poison.h"
 
+
+/*
+ * Implementation of the classic Strict Timestamp Ordering.
+ * The implementation uses a dirty bit to prevent transactions
+ * from reading uncommitted data.
+ *
+ * The dirty bit is also used a latch to protect against race
+ * conditions that may appear from running multiple threads.
+ */
+
+uint64 global_ts = 0;
+
 typedef struct transactional_data_config {
    data_config        super;
    const data_config *application_data_config;
@@ -70,7 +82,7 @@ get_app_value_from_merge_accumulator(merge_accumulator *ma)
 }
 
 static int
-merge_tictoc_tuple(const data_config *cfg,
+merge_tuple(const data_config *cfg,
                    slice              key,         // IN
                    message            old_message, // IN
                    merge_accumulator *new_message) // IN/OUT
@@ -126,14 +138,14 @@ merge_tictoc_tuple(const data_config *cfg,
 }
 
 static int
-merge_tictoc_tuple_final(const data_config *cfg,
+merge_tuple_final(const data_config *cfg,
                          slice              key,
                          merge_accumulator *oldest_message)
 {
-   if (is_merge_accumulator_tuple_header_update(oldest_message)) {
-     // Just discard
-     return 0;
-   }
+  if (is_merge_accumulator_tuple_header_update(oldest_message)) {
+    // Just discard
+    return 0;
+  }
 
    message oldest_message_value =
       get_app_value_from_merge_accumulator(oldest_message);
@@ -167,36 +179,31 @@ transactional_data_config_init(data_config               *in_cfg, // IN
 )
 {
    memcpy(&out_cfg->super, in_cfg, sizeof(out_cfg->super));
-   out_cfg->super.merge_tuples       = merge_tictoc_tuple;
-   out_cfg->super.merge_tuples_final = merge_tictoc_tuple_final;
+   out_cfg->super.merge_tuples       = merge_tuple;
+   out_cfg->super.merge_tuples_final = merge_tuple_final;
    out_cfg->application_data_config  = in_cfg;
 }
 
-
-// TicToc paper used this structure, but it causes a lot of delta overflow
-/* typedef struct { */
-/*    txn_timestamp lock_bit : 1; */
-/*    txn_timestamp delta : 15; */
-/*    txn_timestamp wts : 48; */
-/* } timestamp_set __attribute__((aligned(sizeof(txn_timestamp)))); */
-
 typedef struct {
-   txn_timestamp lock_bit : 1;
-   txn_timestamp wts : 63;
-   txn_timestamp delta : 64;
+   txn_timestamp dirty_bit : 1;
+   txn_timestamp delete_bit : 1;
+   txn_timestamp wts : 62;
+   txn_timestamp rts : 64;
 } timestamp_set __attribute__((aligned(sizeof(txn_timestamp))));
 
-static inline bool
-timestamp_set_is_equal(const timestamp_set *s1, const timestamp_set *s2)
-{
-   return memcmp((const void *)s1, (const void *)s2, sizeof(timestamp_set))
-          == 0;
-}
+typedef struct rw_entry {
+   slice          key;
+   message        msg; // value + op
+   timestamp_set *ts;
+   bool           is_read;
+} rw_entry;
+
+enum sto_access_rc { STO_ACCESS_OK, STO_ACCESS_BUSY, STO_ACCESS_ABORT };
 
 static inline txn_timestamp
-timestamp_set_get_rts(timestamp_set *ts)
+get_next_global_ts()
 {
-   return ts->wts + ts->delta;
+   return __atomic_add_fetch(&global_ts, 1, __ATOMIC_RELAXED);
 }
 
 static inline bool
@@ -224,25 +231,9 @@ timestamp_set_set_timestamps(txn_timestamp  wts,
                              txn_timestamp  rts,
                              timestamp_set *ts)
 {
-   ts->wts   = wts;
-   ts->delta = rts - wts;
+   ts->wts = wts;
+   ts->rts = rts;
 }
-
-static inline void
-timestamp_set_check_invariant(timestamp_set *ts)
-{
-   platform_assert(timestamp_set_get_rts(ts) >= ts->wts);
-}
-
-typedef struct rw_entry {
-   slice          key;
-   message        msg; // value + op
-   txn_timestamp  wts;
-   txn_timestamp  rts;
-   timestamp_set *tuple_ts;
-   bool           is_read;
-} rw_entry;
-
 
 /*
  * This function has the following effects:
@@ -254,31 +245,27 @@ static inline bool
 rw_entry_iceberg_insert(transactional_splinterdb *txn_kvsb, rw_entry *entry)
 {
    // Make sure increasing the refcount only once
-   if (entry->tuple_ts) {
+   if (entry->ts) {
       return FALSE;
    }
 
    // increase refcount for key
    timestamp_set ts = {0};
-   entry->tuple_ts  = &ts;
-   // if there is no item in the cache, it inserts a new item, read a
-   // value from the sketch, and set the bigger one between that and
-   // the given value. As a result, it gets the timestamp greater than
-   // or equals to 0.
+   entry->ts        = &ts;
    return iceberg_insert_and_get(txn_kvsb->tscache,
                                  &entry->key,
-                                 (ValueType **)&entry->tuple_ts,
+                                 (ValueType **)&entry->ts,
                                  platform_get_tid());
 }
 
 static inline void
 rw_entry_iceberg_remove(transactional_splinterdb *txn_kvsb, rw_entry *entry)
 {
-   if (!entry->tuple_ts) {
+   if (!entry->ts) {
       return;
    }
 
-   entry->tuple_ts = NULL;
+   entry->ts = NULL;
 
    iceberg_remove(txn_kvsb->tscache, entry->key, platform_get_tid());
 }
@@ -289,7 +276,7 @@ rw_entry_create()
    rw_entry *new_entry;
    new_entry = TYPED_ZALLOC(0, new_entry);
    platform_assert(new_entry != NULL);
-   new_entry->tuple_ts = NULL;
+   new_entry->ts = NULL;
    return new_entry;
 }
 
@@ -304,8 +291,8 @@ rw_entry_deinit(rw_entry *entry)
 
 /*
  * The msg is the msg from app.
- * In EXPERIMENTAL_MODE_TICTOC_DISK_CACHE, this function adds timestamps at the
- * begin of the msg
+ * In EXPERIMENTAL_MODE_TICTOC_DISK, this function adds timestamps at the begin
+ * of the msg
  */
 static inline void
 rw_entry_set_msg(rw_entry *e, message msg)
@@ -317,6 +304,7 @@ rw_entry_set_msg(rw_entry *e, message msg)
       msg_buf + sizeof(tuple_header), message_data(msg), message_length(msg));
    e->msg = message_create(message_class(msg), slice_create(msg_len, msg_buf));
 }
+
 
 static inline bool
 rw_entry_is_read(const rw_entry *entry)
@@ -362,43 +350,101 @@ rw_entry_get(transactional_splinterdb *txn_kvsb,
    return entry;
 }
 
-static int
-rw_entry_key_compare(const void *elem1, const void *elem2, void *args)
-{
-   const data_config *cfg = (const data_config *)args;
-
-   rw_entry *e1 = *((rw_entry **)elem1);
-   rw_entry *e2 = *((rw_entry **)elem2);
-
-   key akey = key_create_from_slice(e1->key);
-   key bkey = key_create_from_slice(e2->key);
-
-   return data_key_compare(cfg, akey, bkey);
-}
-
-static inline bool
-rw_entry_try_lock(rw_entry *entry)
-{
-   timestamp_set v1, v2;
-   timestamp_set_load(entry->tuple_ts, &v1);
-   v2 = v1;
-   if (v1.lock_bit) {
-      return false;
-   }
-   v2.lock_bit = 1;
-   return timestamp_set_compare_and_swap(entry->tuple_ts, &v1, &v2);
-}
-
 static inline void
-rw_entry_unlock(rw_entry *entry)
+rw_entry_unlock(rw_entry *entry, uint64 txn_ts)
 {
+   // platform_default_log("Unlock key = %s, %lu\n", (char*)entry->key.data,
+   // txn_ts);
    timestamp_set v1, v2;
    do {
-      timestamp_set_load(entry->tuple_ts, &v1);
-      v2          = v1;
-      v2.lock_bit = 0;
-   } while (!timestamp_set_compare_and_swap(entry->tuple_ts, &v1, &v2));
+      timestamp_set_load(entry->ts, &v1);
+      v2           = v1;
+      v2.dirty_bit = 0;
+   } while (!timestamp_set_compare_and_swap(entry->ts, &v1, &v2));
 }
+
+static inline enum sto_access_rc
+rw_entry_try_read_lock(rw_entry *entry, uint64 txn_ts)
+{
+   timestamp_set v1, v2;
+   timestamp_set_load(entry->ts, &v1);
+   if (txn_ts < v1.wts) {
+      return STO_ACCESS_ABORT;
+   }
+   v2 = v1;
+   if (v1.dirty_bit) {
+      return STO_ACCESS_BUSY;
+   }
+   v2.dirty_bit = 1;
+   if (timestamp_set_compare_and_swap(entry->ts, &v1, &v2)) {
+      if (txn_ts < v1.wts) {
+         // TO rule would be violated so we need to abort
+         rw_entry_unlock(entry, txn_ts);
+         return STO_ACCESS_ABORT;
+      }
+   } else {
+      return STO_ACCESS_BUSY;
+   }
+   return STO_ACCESS_OK;
+}
+
+static inline enum sto_access_rc
+rw_entry_try_write_lock(rw_entry *entry, uint64 txn_ts)
+{
+   timestamp_set v1, v2;
+   timestamp_set_load(entry->ts, &v1);
+   if (txn_ts < v1.wts || txn_ts < v1.rts) {
+      // TO rule would be violated so we need to abort
+      return STO_ACCESS_ABORT;
+   }
+   v2 = v1;
+   if (v1.dirty_bit) {
+      return STO_ACCESS_BUSY;
+   }
+   v2.dirty_bit = 1;
+   if (timestamp_set_compare_and_swap(entry->ts, &v1, &v2)) {
+      if (txn_ts < v1.wts || txn_ts < v1.rts) {
+         rw_entry_unlock(entry, txn_ts);
+         return STO_ACCESS_ABORT;
+      }
+   } else {
+      return STO_ACCESS_BUSY;
+   }
+   return STO_ACCESS_OK;
+}
+
+static inline enum sto_access_rc
+rw_entry_read_lock(rw_entry *entry, uint64 txn_ts)
+{
+   // platform_default_log("Trying to lock key for read at ts = %s, %lu\n",
+   // (char*)entry->key.data, txn_ts);
+   enum sto_access_rc rc;
+   do {
+      rc = rw_entry_try_read_lock(entry, txn_ts);
+      if (rc == STO_ACCESS_BUSY) {
+         // 1us is the value that is mentioned in the paper
+         platform_sleep_ns(1000);
+      }
+   } while (rc == STO_ACCESS_BUSY);
+   return rc;
+}
+
+static inline enum sto_access_rc
+rw_entry_write_lock(rw_entry *entry, uint64 txn_ts)
+{
+   // platform_default_log("Trying to lock key for write = %s, %lu\n",
+   // (char*)entry->key.data, txn_ts);
+   enum sto_access_rc rc;
+   do {
+      rc = rw_entry_try_write_lock(entry, txn_ts);
+      if (rc == STO_ACCESS_BUSY) {
+         // 1us is the value that is mentioned in the paper
+         platform_sleep_ns(1000);
+      }
+   } while (rc == STO_ACCESS_BUSY);
+   return rc;
+}
+
 
 static void
 get_global_timestamps(const splinterdb     *kvsb,
@@ -446,8 +492,8 @@ read_from_splinterdb(slice      hash_table_key,
    timestamp_set       *ts  = (timestamp_set *)hash_table_value;
    txn_timestamp_ondisk wts = 0, rts = 0;
    get_global_timestamps(external_data_->kvsb, hash_table_key, &wts, &rts);
-   ts->wts   = wts;
-   ts->delta = rts - wts;
+   ts->wts = wts;
+   ts->rts = rts;
 }
 
 static void
@@ -459,7 +505,7 @@ update_timestamp_to_splinterdb(slice      hash_table_key,
       (iceberg_external_data *)external_data;
    timestamp_set       *ts    = (timestamp_set *)hash_table_value;
    txn_timestamp_ondisk wts   = ts->wts;
-   txn_timestamp_ondisk rts   = timestamp_set_get_rts(ts);
+   txn_timestamp_ondisk rts   = ts->rts;
    tuple_header         tuple = {
               .wts = wts,
               .rts = rts,
@@ -513,6 +559,7 @@ transactional_splinterdb_config_init(
    txn_splinterdb_cfg->iceberght_config.post_remove =
       update_timestamp_to_splinterdb;
 }
+
 
 static int
 transactional_splinterdb_create_or_open(const splinterdb_config   *kvsb_cfg,
@@ -606,6 +653,8 @@ transactional_splinterdb_begin(transactional_splinterdb *txn_kvsb,
 {
    platform_assert(txn);
    memset(txn, 0, sizeof(*txn));
+   txn->ts = get_next_global_ts();
+   // platform_default_log("Starting transaction, ts = %lu\n", txn->ts);
    return 0;
 }
 
@@ -623,130 +672,21 @@ int
 transactional_splinterdb_commit(transactional_splinterdb *txn_kvsb,
                                 transaction              *txn)
 {
-   txn_timestamp commit_ts = 0;
-
-   int       num_reads                    = 0;
-   int       num_writes                   = 0;
-   rw_entry *read_set[RW_SET_SIZE_LIMIT]  = {0};
-   rw_entry *write_set[RW_SET_SIZE_LIMIT] = {0};
-
-   for (int i = 0; i < txn->num_rw_entries; i++) {
-      rw_entry *entry = txn->rw_entries[i];
-      if (rw_entry_is_write(entry)) {
-         write_set[num_writes++] = entry;
-      }
-
-      if (rw_entry_is_read(entry)) {
-         read_set[num_reads++] = entry;
-
-         txn_timestamp wts = entry->wts;
-         commit_ts         = MAX(commit_ts, wts);
-      }
-   }
-
-   platform_sort_slow(write_set,
-                      num_writes,
-                      sizeof(rw_entry *),
-                      rw_entry_key_compare,
-                      (void *)txn_kvsb->tcfg->kvsb_cfg.data_cfg,
-                      NULL);
-
-RETRY_LOCK_WRITE_SET:
-{
-   for (int lock_num = 0; lock_num < num_writes; ++lock_num) {
-      rw_entry *w = write_set[lock_num];
-      if (!w->tuple_ts) {
-         // w->key will be replaced after rw_entry_iceberg_insert. So,
-         // the current key should be freed after that.
-         slice to_be_freed = w->key;
-         rw_entry_iceberg_insert(txn_kvsb, w);
-         void *ptr = (void *)slice_data(to_be_freed);
-         platform_free(0, ptr);
-      }
-
-      if (!rw_entry_try_lock(w)) {
-         // This is "no-wait" optimization in the TicToc paper.
-         for (int i = 0; i < lock_num; ++i) {
-            rw_entry_unlock(write_set[i]);
-         }
-
-         // 1us is the value that is mentioned in the paper
-         platform_sleep_ns(1000);
-
-         goto RETRY_LOCK_WRITE_SET;
-      }
-
-#if DBX1000_CHECK
-      platform_assert(FALSE, "This is currently an invalid path.");
-      timestamp_set v1;
-      timestamp_set_load(w->tuple_ts, &v1);
-      if (v1.wts != w->wts) {
-         for (int i = 0; i <= lock_num; ++i) {
-            rw_entry_unlock(write_set[i]);
-         }
-         transaction_deinit(txn_kvsb, txn);
-         return -1;
-      }
-#endif
-   }
-}
-
-   for (uint64 i = 0; i < num_writes; ++i) {
-      commit_ts =
-         MAX(commit_ts, timestamp_set_get_rts(write_set[i]->tuple_ts) + 1);
-   }
-
-   bool is_abort = FALSE;
-   for (uint64 i = 0; !is_abort && i < num_reads; ++i) {
-      rw_entry *r = read_set[i];
-      platform_assert(rw_entry_is_read(r));
-
-      if (r->rts < commit_ts) {
-         bool          is_success;
-         timestamp_set v1, v2;
-         do {
-            is_success = TRUE;
-            timestamp_set_load(r->tuple_ts, &v1);
-            v2                                 = v1;
-            bool          is_wts_different     = r->wts != v1.wts;
-            txn_timestamp rts                  = timestamp_set_get_rts(&v1);
-            bool          is_locked_by_another = rts <= commit_ts
-                                        && r->tuple_ts->lock_bit
-                                        && !rw_entry_is_write(r);
-            if (is_wts_different || is_locked_by_another) {
-               is_abort = TRUE;
-               break;
-            }
-            if (rts <= commit_ts) {
-               txn_timestamp delta = commit_ts - v1.wts;
-               /* txn_timestamp shift = delta - (delta & 0x7fff); */
-               txn_timestamp shift = delta - (delta & UINT64_MAX);
-               platform_assert(shift == 0);
-               v2.wts += shift;
-               v2.delta = delta - shift;
-               is_success =
-                  timestamp_set_compare_and_swap(r->tuple_ts, &v1, &v2);
-            }
-         } while (!is_success);
-      }
-   }
-
-   if (!is_abort) {
-      int rc = 0;
-
-      for (uint64 i = 0; i < num_writes; ++i) {
-         rw_entry *w = write_set[i];
-         platform_assert(rw_entry_is_write(w));
-
+   // unlock all writes and update the DB
+   for (int i = 0; i < txn->num_rw_entries; ++i) {
+      rw_entry *w = txn->rw_entries[i];
+      if (rw_entry_is_write(w)) {
 #if EXPERIMENTAL_MODE_BYPASS_SPLINTERDB == 1
          if (0) {
 #endif
             tuple_header tuple = {
-               .wts = commit_ts,
-               .rts = commit_ts,
+               .wts = txn->ts,
+               .rts = txn->ts,
             };
             tuple_header *msg = (tuple_header *)message_data(w->msg);
             memcpy(msg, &tuple, sizeof(tuple));
+
+            int rc = 0;
             switch (message_class(w->msg)) {
                case MESSAGE_TYPE_INSERT:
                   rc = splinterdb_insert(
@@ -762,35 +702,32 @@ RETRY_LOCK_WRITE_SET:
                default:
                   break;
             }
-
             platform_assert(rc == 0, "Error from SplinterDB: %d\n", rc);
 #if EXPERIMENTAL_MODE_BYPASS_SPLINTERDB == 1
          }
 #endif
-         timestamp_set v1, v2;
-         do {
-            timestamp_set_load(w->tuple_ts, &v1);
-            v2          = v1;
-            v2.wts      = commit_ts;
-            v2.delta    = 0;
-            v2.lock_bit = 0;
-         } while (!timestamp_set_compare_and_swap(w->tuple_ts, &v1, &v2));
-      }
-   } else {
-      for (uint64 i = 0; i < num_writes; ++i) {
-         rw_entry_unlock(write_set[i]);
+         // w->ts->wts = txn->ts;
+         rw_entry_unlock(w, txn->ts);
       }
    }
 
    transaction_deinit(txn_kvsb, txn);
 
-   return (-1 * is_abort);
+   return 0;
 }
 
 int
 transactional_splinterdb_abort(transactional_splinterdb *txn_kvsb,
                                transaction              *txn)
 {
+   // unlock all writes
+   for (int i = 0; i < txn->num_rw_entries; ++i) {
+      rw_entry *w = txn->rw_entries[i];
+      if (rw_entry_is_write(w)) {
+         rw_entry_unlock(w, txn->ts);
+      }
+   }
+
    transaction_deinit(txn_kvsb, txn);
 
    return 0;
@@ -802,30 +739,19 @@ local_write(transactional_splinterdb *txn_kvsb,
             slice                     user_key,
             message                   msg)
 {
-   const data_config *cfg = txn_kvsb->tcfg->kvsb_cfg.data_cfg;
-   char              *user_key_copy;
-   user_key_copy = TYPED_ARRAY_ZALLOC(0, user_key_copy, slice_length(user_key));
-   rw_entry *entry = rw_entry_get(
-      txn_kvsb, txn, slice_copy_contents(user_key_copy, user_key), cfg, FALSE);
-   /* if (message_class(msg) == MESSAGE_TYPE_UPDATE */
-   /*     || message_class(msg) == MESSAGE_TYPE_DELETE) */
-   /* { */
-   /*    rw_entry_iceberg_insert(txn_kvsb, entry); */
-   /*    timestamp_set v = *entry->tuple_ts; */
-   /*    entry->wts      = v.wts; */
-   /*    entry->rts      = timestamp_set_get_rts(&v); */
-   /* } */
+   const data_config *cfg   = txn_kvsb->tcfg->kvsb_cfg.data_cfg;
+   rw_entry          *entry = rw_entry_get(txn_kvsb, txn, user_key, cfg, FALSE);
 
-#if DBX1000_CHECK
-   platform_assert(FALSE, "This is currently an invalid path.");
-   rw_entry_iceberg_insert(txn_kvsb, entry);
-   timestamp_set v1;
-   timestamp_set_load(entry->tuple_ts, &v1);
-   entry->wts = v1.wts;
-   entry->rts = timestamp_set_get_rts(&v1);
-#endif
-
-   if (message_is_null(entry->msg)) {
+   if (!rw_entry_is_write(entry)) {
+      rw_entry_iceberg_insert(txn_kvsb, entry);
+      if (rw_entry_write_lock(entry, txn->ts) == STO_ACCESS_ABORT) {
+         transactional_splinterdb_abort(txn_kvsb, txn);
+         return 1;
+      }
+      // To prevent deadlocks, we have to update the wts
+      entry->ts->wts = txn->ts;
+      // platform_default_log("Locked key for write = %s, %lu\n",
+      // (char*)entry->key.data, txn->ts);
       rw_entry_set_msg(entry, msg);
    } else {
       // TODO it needs to be checked later for upsert
@@ -838,7 +764,6 @@ local_write(transactional_splinterdb *txn_kvsb,
             rw_entry_set_msg(entry, msg);
          } else {
             platform_assert(message_class(entry->msg) != MESSAGE_TYPE_DELETE);
-
             merge_accumulator new_message;
             merge_accumulator_init_from_message(&new_message, 0, msg);
             data_merge_tuples(cfg, ukey, entry->msg, &new_message);
@@ -911,54 +836,47 @@ transactional_splinterdb_lookup(transactional_splinterdb *txn_kvsb,
 
    int rc = 0;
 
+   // TODO: do not insert if already inserted for this transaction
    rw_entry_iceberg_insert(txn_kvsb, entry);
 
-   // timestamp_set v1, v2;
-   timestamp_set v1;
-   do {
-      timestamp_set_load(entry->tuple_ts, &v1);
-      if (v1.lock_bit) {
-         continue;
-      }
-
 #if EXPERIMENTAL_MODE_BYPASS_SPLINTERDB == 0
-      if (rw_entry_is_write(entry)) {
-         // read my write
-         // TODO This works for simple insert/update. However, it doesn't work
-         // for upsert.
-         // TODO if it succeeded, this read should not be considered for
-         // validation. entry->is_read should be false.
-         _splinterdb_lookup_result *_result =
-            (_splinterdb_lookup_result *)result;
-         const size_t value_len =
-            message_length(entry->msg) - sizeof(tuple_header);
-         merge_accumulator_resize(&_result->value, value_len);
-         memcpy(merge_accumulator_data(&_result->value),
-                message_data(entry->msg) + sizeof(tuple_header),
-                value_len);
-      } else {
-         rc = splinterdb_lookup(txn_kvsb->kvsb, entry->key, result);
-      }
-#endif
-   } while (!timestamp_set_compare_and_swap(entry->tuple_ts, &v1, &v1));
-   // This code is so slow for some reason..
-   // timestamp_set_load(entry->tuple_ts, &v2);
-   // } while (memcmp(&v1, &v2, sizeof(v1)) != 0);
-
-   entry->wts = v1.wts;
-   entry->rts = timestamp_set_get_rts(&v1);
-
-   // Get value only from the disk. Timestamps are in cache.
-   if (splinterdb_lookup_found(result)) {
+   if (rw_entry_is_write(entry)) {
+      // read my write
+      // TODO This works for simple insert/update. However, it doesn't work
+      // for upsert.
+      // TODO if it succeeded, this read should not be considered for
+      // validation. entry->is_read should be false.
       _splinterdb_lookup_result *_result = (_splinterdb_lookup_result *)result;
-      tuple_header              *tuple =
-         (tuple_header *)merge_accumulator_data(&_result->value);
+      merge_accumulator_resize(&_result->value, message_length(entry->msg));
+      memcpy(merge_accumulator_data(&_result->value),
+             message_data(entry->msg),
+             message_length(entry->msg));
+   } else {
+      if (rw_entry_read_lock(entry, txn->ts) == STO_ACCESS_ABORT) {
+         transactional_splinterdb_abort(txn_kvsb, txn);
+         return 1;
+      }
+      // platform_default_log("Locked key for read = %s, %lu\n",
+      // (char*)entry->key.data, txn->ts);
+      rc = splinterdb_lookup(txn_kvsb->kvsb, entry->key, result);
 
-      const size_t value_len =
-         merge_accumulator_length(&_result->value) - sizeof(tuple_header);
-      memmove(merge_accumulator_data(&_result->value), tuple->value, value_len);
-      merge_accumulator_resize(&_result->value, value_len);
+      if (splinterdb_lookup_found(result)) {
+         _splinterdb_lookup_result *_result = (_splinterdb_lookup_result *)result;
+         tuple_header *tuple =
+            (tuple_header *)merge_accumulator_data(&_result->value);
+
+         const size_t value_len =
+            merge_accumulator_length(&_result->value) - sizeof(tuple_header);
+         memmove(
+            merge_accumulator_data(&_result->value), tuple->value, value_len);
+         merge_accumulator_resize(&_result->value, value_len);
+         if (txn->ts > entry->ts->rts) {
+            entry->ts->rts = txn->ts;
+         }
+      }
+
+      rw_entry_unlock(entry, txn->ts);
    }
-
+#endif
    return rc;
 }
