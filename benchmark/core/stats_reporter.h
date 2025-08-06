@@ -59,6 +59,24 @@ void PrintDistribution(std::vector<T> &data, std::ostream &out = std::cout)
    out << "P99.9: " << data[data.size() * 999 / 1000] << std::endl;
 }
 
+template<typename T>
+void PrintHistogram(std::vector<T> &data, std::ostream &out = std::cout)
+{
+   if (data.empty()) {
+      return;
+   }
+   
+   std::unordered_map<T, size_t> histo;
+   for (auto value : data) {
+       histo[value]++;
+   }
+
+   for (auto value_cnt : histo) {
+      out << value_cnt.first << ": " << value_cnt.second << std::endl;
+   }
+}
+
+
 static void PrintYCSBStats(const std::vector<YCSBOutput> &outputs,
                           uint64_t total_txn_count,
                           double duration,
@@ -135,6 +153,8 @@ static void PrintYCSBStats(const std::vector<YCSBOutput> &outputs,
    PrintDistribution<double>(total_abort_txn_latencies);
    std::cout << "# Abort count per transaction" << std::endl;
    PrintDistribution<unsigned long>(total_abort_cnt_per_txn);
+   std::cout << "# Print retries histogram" << std::endl;
+   PrintHistogram<unsigned long>(total_abort_cnt_per_txn);
 
    if (is_long_txn_enabled) {
       std::cout << "# Long Transaction Stats" << std::endl;

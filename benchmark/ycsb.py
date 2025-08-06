@@ -34,9 +34,10 @@ def main(argc, argv):
     enable_bgthreads = False
     cache_size_mb = 4096
     run_seconds = 0
+    ycsbc_options = ''
 
-    opts, _ = getopt.getopt(sys.argv[1:], 's:w:t:d:bc:r:gh', 
-                            ['system=', 'workload=', 'threads=', 'dbfile=', 'bgthreads', 'cachesize=', 'run_seconds=', 'gdb', 'help'])
+    opts, _ = getopt.getopt(sys.argv[1:], 's:w:t:d:bc:r:o:gh', 
+                            ['system=', 'workload=', 'threads=', 'dbfile=', 'bgthreads', 'cachesize=', 'run_seconds=', 'ycsbc_options=', 'gdb', 'help'])
     system = None
     conf = None
     dev_name = '/dev/md0'
@@ -66,6 +67,8 @@ def main(argc, argv):
             cache_size_mb = int(arg)
         elif opt in ('-r', '--run_seconds'):
             run_seconds = float(arg)
+        elif opt in ('-o', '--ycsbc_options'):
+            ycsbc_options = arg
         elif opt in ('-g', '--gdb'):
             gdb_cmd = 'gdb -ex=r --args'
         elif opt in ('-h', '--help'):
@@ -140,6 +143,7 @@ def main(argc, argv):
                 'write': {
                     'default': 5000,
                     'sto-disk': 10000,
+                    'sto-disk-cache': 10000,
                     'tictoc-disk': 20000,
                     'tictoc-disk-cache': 20000,
                     'mvcc-disk': 1500000
@@ -155,27 +159,32 @@ def main(argc, argv):
                 'read': {
                     'default': 3000,
                     'sto-disk': 4000,
+                    'sto-disk-cache': 4000,
                     'tictoc-disk': 8000,
                     'tictoc-disk-cache': 8000,
-                    'mvcc-disk': 200000
+                    'mvcc-disk': 230000,
+                    'mvcc-disk-cache': 6000
                 },
                 'write': {
                     'default': 2000,
-                    'mvcc-memory': 8000,
                     'sto-disk': 4000,
+                    'sto-disk-cache': 4000,
                     'tictoc-disk': 16000,
                     'tictoc-disk-cache': 16000,
-                    'mvcc-disk': 420000
+                    'mvcc-disk': 110000,
+                    'mvcc-disk-cache': 4500
                 },
                 'mixed': {
                     'default': 2000,
                     'sto-disk': 4000,
+                    'sto-disk-cache': 4000,
                     'tictoc-disk': 8000,
                     'tictoc-disk-cache': 8000,
-                    'mvcc-disk': 320000
+                    'mvcc-disk': 420000,
+                    'mvcc-disk-cache': 8000
                 },
                 'long': {
-                    'mvcc-disk': 320000
+                    'mvcc-disk': 4000
                 }
             }
         },
@@ -184,20 +193,26 @@ def main(argc, argv):
                 'read': {
                     'default': 3000,
                     'sto-disk': 3000,
+                    'sto-disk-cache': 3000,
                     'tictoc-disk': 4000,
+                    'tictoc-disk-cache': 4000,
                     'mvcc-disk': 1000000
                 },
                 'write': {
                     'default': 2000,
                     'mvcc-memory': 8000,
                     'sto-disk': 4000,
-                    'tictoc-disk': 16000,
+                    'sto-disk-cache': 4000,
+                    'tictoc-disk': 16000,   
+                    'tictoc-disk-cache': 16000,
                     'mvcc-disk': 1000000
                 },
                 'mixed': {
                     'default': 2000,
                     'sto-disk': 3000,
+                    'sto-disk-cache': 3000,
                     'tictoc-disk': 4000,
+                    'tictoc-disk-cache': 4000,
                     'mvcc-disk': 1000000
                 }
             }
@@ -207,19 +222,25 @@ def main(argc, argv):
                 'read': {
                     'default': 3000,
                     'sto-disk': 4000,
+                    'sto-disk-cache': 4000,
                     'tictoc-disk': 5000,
+                    'tictoc-disk-cache': 5000,
                     'mvcc-disk': 320000
                 },
                 'write': {
                     'default': 2000,
                     'sto-disk': 3000,
+                    'sto-disk-cache': 3000,
                     'tictoc-disk': 4000,
+                    'tictoc-disk-cache': 4000,
                     'mvcc-disk': 320000
                 },
                 'mixed': {
                     'default': 2000,
                     'sto-disk': 2000,
+                    'sto-disk-cache': 2000,
                     'tictoc-disk': 3000,
+                    'tictoc-disk-cache': 3000,
                     'mvcc-disk': 200000
                 }
             },
@@ -227,19 +248,25 @@ def main(argc, argv):
                 'read': {
                     'default': 1000,
                     'sto-disk': 4000,
+                    'sto-disk-cache': 4000,
                     'tictoc-disk': 5000,
+                    'tictoc-disk-cache': 5000,
                     'mvcc-disk': 320000
                 },
                 'write': {
                     'default': 1000,
                     'sto-disk': 2000,
+                    'sto-disk-cache': 2000,
                     'tictoc-disk': 2000,
+                    'tictoc-disk-cache': 2000,
                     'mvcc-disk': 320000
                 },
                 'mixed': {
                     'default': 2000,
                     'sto-disk': 2000,
+                    'sto-disk-cache': 2000,
                     'tictoc-disk': 2000,
+                    'tictoc-disk-cache': 2000,
                     'mvcc-disk': 200000
                 }
             }
@@ -247,24 +274,32 @@ def main(argc, argv):
     }
 
     try:
+        # No support long_txn now
         if conf and 'read' in conf:
             conf_type = 'read'
         elif conf and 'write' in conf:
             conf_type = 'write'
-        else:
+        elif conf and 'mixed' in conf:
             conf_type = 'mixed'
+        elif conf and 'long' in conf:
+            conf_type = 'long'
+        else:
+            raise "Invalid configuration"
 
         if system in backofftime[dev_name][threads][conf_type]:
             backoff = backofftime[dev_name][threads][conf_type][system]
         else:
             backoff = backofftime[dev_name][threads][conf_type]['default']
 
-        cmd += f' -w mintxnabortpaneltyus {backoff}'
-    except: # ignore key error -- use number in the workload spec
+        if 'mintxnabortpaneltyus' not in ycsbc_options:
+            cmd += f' -w mintxnabortpaneltyus {backoff}'
+    except:
         pass
 
     # run load phase
     # os.system(f'LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so ./ycsbc -db {db} -threads {threads} -L {spec_file} -p splinterdb.filename {dev_name} -p splinterdb.cache_size_mb {cache_size_mb}')
+    if ycsbc_options:
+        cmd += f' {ycsbc_options}'
     print(cmd)
     os.system(cmd)
     
