@@ -191,7 +191,7 @@ def main(argc, argv):
         '/dev/sda4': {
             120: {
                 'read': {
-                    'default': 3000,
+                    'default': 28000,
                     'sto-disk': 3000,
                     'sto-disk-cache': 3000,
                     'tictoc-disk': 4000,
@@ -199,7 +199,7 @@ def main(argc, argv):
                     'mvcc-disk': 1000000
                 },
                 'write': {
-                    'default': 2000,
+                    'default': 3000,
                     'mvcc-memory': 8000,
                     'sto-disk': 4000,
                     'sto-disk-cache': 4000,
@@ -208,7 +208,7 @@ def main(argc, argv):
                     'mvcc-disk': 1000000
                 },
                 'mixed': {
-                    'default': 2000,
+                    'default': 40000,
                     'sto-disk': 3000,
                     'sto-disk-cache': 3000,
                     'tictoc-disk': 4000,
