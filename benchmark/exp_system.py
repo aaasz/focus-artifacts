@@ -92,6 +92,9 @@ class ExpSystem:
         os.chdir(splinterdb_dir)
         run_cmd('git checkout -- src/experimental_mode.h')
         run_cmd('sudo -E make clean')
+        run_cmd('date')
+        run_cmd('hostname -A')
+        run_cmd('git rev-parse --verify HEAD')
         if sys in system_sed_map:
             for sed in system_sed_map[sys]:
                 run_cmd(sed)
@@ -127,6 +130,9 @@ class ExpSystem:
         os.chdir(splinterdb_dir)
         run_cmd('git checkout -- src/experimental_mode.h')
         run_cmd('sudo -E make clean')
+        run_cmd('date')
+        run_cmd('hostname -A')
+        run_cmd('git rev-parse --verify HEAD')
         if sys in system_sed_map:
             for sed in system_sed_map[sys]:
                 run_cmd(sed)
