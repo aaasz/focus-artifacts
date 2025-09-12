@@ -16,34 +16,30 @@
  */
 
 typedef struct epoch_server_chardonnay {
-    _Atomic uint64_t counter;
-    pthread_t thread;
-    _Atomic int running;
+    int64_t counter;
+    platform_thread thread;
+    int running;
 } epoch_server_chardonnay;
 
-static void* epoch_update_thread(void *arg) {
+static void epoch_update_thread(void *arg) {
     epoch_server_chardonnay *server = (epoch_server_chardonnay *)arg;
-    struct timespec sleep_time = {
-        .tv_sec = 0,
-        .tv_nsec = 10 * 1000 * 1000  // 10 milliseconds
-    };
 
     while (server->running) {
-        nanosleep(&sleep_time, NULL);
-        __atomic_add_fetch(&server->counter, 1, __ATOMIC_SEQ_CST);
+        platform_sleep_ns(10 *1000 * 1000); // 10 milliseconds
+        __atomic_add_fetch(&server->counter, 1, __ATOMIC_RELAXED);
     }
-
-    return NULL;
 }
 
 epoch_server_chardonnay* epoch_server_init(void) {
-    epoch_server_chardonnay *server = calloc(1, sizeof(epoch_server_chardonnay));
+    epoch_server_chardonnay *server;
+    server = TYPED_ZALLOC(0, server);
+ 
     if (!server) {
         return NULL;
     }
 
-    server->counter = 0;
-    server->running = 0;
+    //server->counter = 0;
+    //server->running = 0;
 
     return server;
 }
@@ -55,8 +51,8 @@ int epoch_server_start(epoch_server_chardonnay *server) {
 
     server->running = 1;
 
-    int ret = pthread_create(&server->thread, NULL, epoch_update_thread, server);
-    if (ret != 0) {
+    platform_status ret = platform_thread_create(&server->thread, false, epoch_update_thread, server, 0);
+    if (!SUCCESS(ret)) {
         server->running = 0;
         return -1;
     }
@@ -70,14 +66,15 @@ void epoch_server_stop(epoch_server_chardonnay *server) {
     }
 
     server->running = 0;
-    pthread_join(server->thread, NULL);
+
+    platform_thread_join(server->thread);
 }
 
 uint64_t epoch_server_get_epoch(epoch_server_chardonnay *server) {
     if (!server) {
         return 0;
     }
-    return __atomic_load_n(&server->counter, __ATOMIC_SEQ_CST);
+    return __atomic_load_n(&server->counter, __ATOMIC_RELAXED);
 }
 
 void epoch_server_deinit(epoch_server_chardonnay *server) {
@@ -86,7 +83,7 @@ void epoch_server_deinit(epoch_server_chardonnay *server) {
     }
 
     epoch_server_stop(server);
-    free(server);
+    platform_free(0, server);
 }
 
 /*
