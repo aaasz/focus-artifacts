@@ -10,6 +10,84 @@
 #include "FPSketch/iceberg_table.h"
 #include "poison.h"
 
+/*
+ * Implements the epoch server that provides a global epoch counter.
+ * (starts a separate thread; alternatively we can use the kernel timer and signal (e.g., Linux's timer_create))
+ */
+
+typedef struct epoch_server_chardonnay {
+    _Atomic uint64_t counter;
+    pthread_t thread;
+    _Atomic int running;
+} epoch_server_chardonnay;
+
+static void* epoch_update_thread(void *arg) {
+    epoch_server_chardonnay *server = (epoch_server_chardonnay *)arg;
+    struct timespec sleep_time = {
+        .tv_sec = 0,
+        .tv_nsec = 10 * 1000 * 1000  // 10 milliseconds
+    };
+
+    while (server->running) {
+        nanosleep(&sleep_time, NULL);
+        __atomic_add_fetch(&server->counter, 1, __ATOMIC_SEQ_CST);
+    }
+
+    return NULL;
+}
+
+epoch_server_chardonnay* epoch_server_init(void) {
+    epoch_server_chardonnay *server = calloc(1, sizeof(epoch_server_chardonnay));
+    if (!server) {
+        return NULL;
+    }
+
+    server->counter = 0;
+    server->running = 0;
+
+    return server;
+}
+
+int epoch_server_start(epoch_server_chardonnay *server) {
+    if (!server || server->running) {
+        return -1;
+    }
+
+    server->running = 1;
+
+    int ret = pthread_create(&server->thread, NULL, epoch_update_thread, server);
+    if (ret != 0) {
+        server->running = 0;
+        return -1;
+    }
+
+    return 0;
+}
+
+void epoch_server_stop(epoch_server_chardonnay *server) {
+    if (!server || !server->running) {
+        return;
+    }
+
+    server->running = 0;
+    pthread_join(server->thread, NULL);
+}
+
+uint64_t epoch_server_get_epoch(epoch_server_chardonnay *server) {
+    if (!server) {
+        return 0;
+    }
+    return __atomic_load_n(&server->counter, __ATOMIC_SEQ_CST);
+}
+
+void epoch_server_deinit(epoch_server_chardonnay *server) {
+    if (!server) {
+        return;
+    }
+
+    epoch_server_stop(server);
+    free(server);
+}
 
 /*
  * Implements a lock table that uses READ/WRITE locks and the WOUND-WAIT policy
@@ -185,9 +263,7 @@ _lock(lock_entry *le, lock_type lt, transaction *txn)
    return LOCK_TABLE_CHARDONNAY_RC_OK;
 }
 
-lock_table_chardonnay
-
-_rc
+lock_table_chardonnay_rc
 _unlock(lock_entry *le, lock_type lt, transaction *txn)
 {
    platform_condvar_lock(&le->condvar);
@@ -218,34 +294,6 @@ _unlock(lock_entry *le, lock_type lt, transaction *txn)
 
    platform_condvar_unlock(&le->condvar);
    return LOCK_TABLE_CHARDONNAY_RC_NODATA;
-}
-#else
-
-lock_entry *
-lock_entry_init()
-{
-   platform_assert(FALSE, "Not implemented");
-   return NULL;
-}
-
-void
-lock_entry_destroy(lock_entry *le)
-{
-   platform_assert(FALSE, "Not implemented");
-}
-
-lock_table_chardonnay_rc
-_lock(lock_entry *le, lock_type lt, transaction *txn)
-{
-   platform_assert(FALSE, "Not implemented");
-   return 0;
-}
-
-lock_table_chardonnay_rc
-_unlock(lock_entry *le, lock_type lt, transaction *txn)
-{
-   platform_assert(FALSE, "Not implemented");
-   return 0;
 }
 
 lock_table_chardonnay_rc
@@ -307,6 +355,12 @@ lock_table_chardonnay_release_entry_lock(lock_table_chardonnay *lock_tbl,
    return LOCK_TABLE_CHARDONNAY_RC_OK;
 }
 
+
+/*
+ * Implementation of Chardonnay (lock-free read-only transactions, dry-run, 2PL). It uses a lock_table that
+ * implements the WOUND-WAIT deadlock prevention mechanism.
+ */
+
 typedef struct transactional_splinterdb_config {
    splinterdb_config           kvsb_cfg;
    transaction_isolation_level isol_level;
@@ -317,12 +371,9 @@ typedef struct transactional_splinterdb {
    splinterdb                      *kvsb;
    transactional_splinterdb_config *tcfg;
    lock_table_chardonnay           *lock_tbl;
+   epoch_server_chardonnay         *epoch_server;
 } transactional_splinterdb;
 
-/*
- * Implementation of Chardonnay (lock-free read-only transactions, dry-run, 2PL). It uses a lock_table that
- * implements the WOUND-WAIT deadlock prevention mechanism.
- */
 txn_timestamp global_ts = 0;
 
 static inline txn_timestamp
@@ -439,6 +490,8 @@ transactional_splinterdb_create_or_open(const splinterdb_config   *kvsb_cfg,
    }
 
    _txn_kvsb->lock_tbl = lock_table_chardonnay_create(kvsb_cfg->data_cfg);
+   _txn_kvsb->epoch_server = epoch_server_init();
+   epoch_server_start(_txn_kvsb->epoch_server);
 
    *txn_kvsb = _txn_kvsb;
 
@@ -465,6 +518,9 @@ transactional_splinterdb_close(transactional_splinterdb **txn_kvsb)
 {
    transactional_splinterdb *_txn_kvsb = *txn_kvsb;
    lock_table_chardonnay_destroy(_txn_kvsb->lock_tbl);
+
+   epoch_server_stop(_txn_kvsb->epoch_server);
+   epoch_server_deinit(_txn_kvsb->epoch_server);
 
    splinterdb_close(&_txn_kvsb->kvsb);
 
