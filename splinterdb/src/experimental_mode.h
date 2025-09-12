@@ -151,4 +151,7 @@ print_current_experimental_modes()
    if (EXPERIMENTAL_MODE_SILO_MEMORY) {
       platform_default_log("EXPERIMENTAL_MODE_SILO_MEMORY\n");
    }
+   if (EXPERIMENTAL_MODE_CHARDONNAY) {
+      platform_default_log("EXPERIMENTAL_MODE_CHARDONNAY\n");
+   }
 }

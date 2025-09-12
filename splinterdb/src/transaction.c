@@ -13,7 +13,7 @@ typedef struct transaction {
    rw_entry *rw_entries[RW_SET_SIZE_LIMIT];
    uint64    num_rw_entries;
    uint128   ts;
-#   if EXPERIMENTAL_MODE_2PL_WAIT_DIE || EXPERIMENTAL_MODE_2PL_WOUND_WAIT
+#   if EXPERIMENTAL_MODE_2PL_WAIT_DIE || EXPERIMENTAL_MODE_2PL_WOUND_WAIT || EXPERIMENTAL_MODE_CHARDONNAY
    bool      wounded;
 #   endif
 } transaction;
