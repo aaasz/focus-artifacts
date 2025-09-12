@@ -70,6 +70,8 @@ typedef struct transaction {
 #   include "transaction_impl/transaction_kr_occ.h"
 #elif EXPERIMENTAL_MODE_SILO_MEMORY
 #   include "transaction_impl/transaction_tictoc_lock_silo.h"
+#elif EXPERIMENTAL_MODE_CHARDONNAY
+#   include "transaction_impl/transaction_chardonnay.h"
 #else
 #   error "Unknown experimental mode"
 #endif

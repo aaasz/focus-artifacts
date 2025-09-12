@@ -32,7 +32,8 @@ available_systems = [
     'mvcc-counter',
     'mvcc-counter-lazy',
     'mvcc-sketch',
-    'mvcc-sketch-lazy'
+    'mvcc-sketch-lazy',
+    'chardonnay',
 ]
 
 system_sed_map = {
@@ -64,6 +65,7 @@ system_sed_map = {
     'mvcc-counter-lazy': ["sed -i 's/#define EXPERIMENTAL_MODE_MVCC_COUNTER_LAZY [ ]*0/#define EXPERIMENTAL_MODE_MVCC_COUNTER_LAZY 1/g' src/experimental_mode.h"],
     'mvcc-sketch': ["sed -i 's/#define EXPERIMENTAL_MODE_MVCC_SKETCH [ ]*0/#define EXPERIMENTAL_MODE_MVCC_SKETCH 1/g' src/experimental_mode.h"],
     'mvcc-sketch-lazy': ["sed -i 's/#define EXPERIMENTAL_MODE_MVCC_SKETCH_LAZY [ ]*0/#define EXPERIMENTAL_MODE_MVCC_SKETCH_LAZY 1/g' src/experimental_mode.h"],
+    'chardonnay': ["sed -i 's/#define EXPERIMENTAL_MODE_CHARDONNAY [ ]*0/#define EXPERIMENTAL_MODE_CHARDONNAY 1/g' src/experimental_mode.h"],
 }
 
 class ExpSystem:

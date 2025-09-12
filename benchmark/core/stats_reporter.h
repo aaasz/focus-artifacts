@@ -7,6 +7,7 @@
 #include <vector>
 #include <fstream>
 #include <unistd.h>
+#include <unordered_map>
 #include "benchmark_structs.h"
 
 namespace ycsbc {
