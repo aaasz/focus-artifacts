@@ -16,6 +16,9 @@ typedef struct transaction {
 #   if EXPERIMENTAL_MODE_2PL_WAIT_DIE || EXPERIMENTAL_MODE_2PL_WOUND_WAIT || EXPERIMENTAL_MODE_CHARDONNAY
    bool      wounded;
 #   endif
+#if EXPERIMENTAL_MODE_CHARDONNAY
+   uint32    epoch;
+#endif
 } transaction;
 #endif
 
