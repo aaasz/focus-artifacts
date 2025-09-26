@@ -399,6 +399,11 @@ rw_entry_create()
 static inline void
 rw_entry_deinit(rw_entry *entry)
 {
+   if (!slice_is_null(entry->key)) {
+      void *ptr = (void *)slice_data(entry->key);
+      platform_free(0, ptr);
+   }
+
    if (!message_is_null(entry->msg)) {
       void *ptr = (void *)message_data(entry->msg);
       platform_free(0, ptr);
@@ -438,12 +443,6 @@ rw_entry_get(transactional_splinterdb *txn_kvsb,
    const key ukey                     = key_create_from_slice(user_key);
    for (int i = 0; i < txn->num_rw_entries; ++i) {
       entry = txn->rw_entries[i];
-
-      platform_default_log("Comparing keys: %.*s and %.*s\n",
-                           (int)slice_length(entry->key),
-                           (char *)slice_data(entry->key),
-                           (int)slice_length(user_key),
-                           (char *)slice_data(user_key));
 
       if (data_key_compare(cfg, ukey, key_create_from_slice(entry->key)) == 0) {
          need_to_create_new_entry = FALSE;
@@ -691,10 +690,8 @@ _local_write(transactional_splinterdb *txn_kvsb,
    //const data_config *cfg = txn_kvsb->tcfg->kvsb_cfg.data_cfg;
    const data_config *cfg = txn_kvsb->tcfg->txn_data_cfg.application_data_cfg;
 
-   char              *user_key_copy;
-   user_key_copy = TYPED_ARRAY_ZALLOC(0, user_key_copy, slice_length(user_key));
    rw_entry *entry = rw_entry_get(
-      txn_kvsb, txn, slice_copy_contents(user_key_copy, user_key), cfg, FALSE);
+      txn_kvsb, txn, user_key, cfg, FALSE);
    /* if (message_class(msg) == MESSAGE_TYPE_UPDATE */
    /*     || message_class(msg) == MESSAGE_TYPE_DELETE) */
    /* { */
@@ -1010,7 +1007,9 @@ transactional_splinterdb_lookup(transactional_splinterdb *txn_kvsb,
                                 splinterdb_lookup_result *result)
 {
    const data_config *cfg   = txn_kvsb->tcfg->txn_data_cfg.application_data_cfg;
-   rw_entry          *entry = rw_entry_get(txn_kvsb, txn, user_key, cfg, TRUE);
+   char *user_key_copy;
+   user_key_copy = TYPED_ARRAY_ZALLOC(0, user_key_copy, slice_length(user_key));
+   rw_entry *entry = rw_entry_get(txn_kvsb, txn, slice_copy_contents(user_key_copy, user_key), cfg, TRUE);
 
    int rc = 0;
 
