@@ -320,6 +320,10 @@ lock_table_chardonnay_try_acquire_entry_lock(lock_table_chardonnay *lock_tbl,
                                       lock_type       lt,
                                       transaction    *txn)
 {
+   //platform_default_log("Try to acquire %s lock on key %s\n",
+   //                     (lt == READ_LOCK) ? "READ" : "WRITE",
+   //                     (char *)slice_data(entry->key));
+
    if (entry->le) {
       // we already have a pointer to the lock status
       return _lock(entry->le, lt, txn);
@@ -353,7 +357,8 @@ lock_table_chardonnay_release_entry_lock(lock_table_chardonnay *lock_tbl,
                                          transaction    *txn)
 {
    platform_assert(entry->le != NULL,
-                   "Trying to release a lock using NULL lock entry");
+                   "Trying to release a lock using NULL lock entry; for key %s\n",
+                   (char *)slice_data(entry->key));
 
    if (_unlock(entry->le, lt, txn) == LOCK_TABLE_CHARDONNAY_RC_OK) {
       // platform_assert(iceberg_force_remove(&lock_tbl->table, key,
@@ -459,6 +464,19 @@ rw_entry_get(transactional_splinterdb *txn_kvsb,
    return entry;
 }
 
+// static int
+// rw_entry_key_compare(const void *elem1, const void *elem2, void *args)
+// {
+//    const data_config *cfg = (const data_config *)args;
+
+//    rw_entry *e1 = *((rw_entry **)elem1);
+//    rw_entry *e2 = *((rw_entry **)elem2);
+
+//    key akey = key_create_from_slice(e1->key);
+//    key bkey = key_create_from_slice(e2->key);
+
+//    return data_key_compare(cfg, akey, bkey);
+// }
 
 /* Implement the transactional interface */
 
@@ -677,9 +695,9 @@ transaction_deinit(transactional_splinterdb *txn_kvsb, transaction *txn)
    }
 }
 
-int _compare(const void *a, const void *b) {
-   return slice_lex_cmp((*(rw_entry*)a).key, (*(rw_entry*)b).key);
-}
+//int _compare(const void *a, const void *b) {
+//   return slice_lex_cmp((*(rw_entry*)a).key, (*(rw_entry*)b).key);
+//}
 
 static int
 _local_write(transactional_splinterdb *txn_kvsb,
@@ -687,6 +705,9 @@ _local_write(transactional_splinterdb *txn_kvsb,
             slice                     user_key,
             message                   msg)
 {
+   platform_default_log("_local_write; key = %s\n",
+                        (char *)slice_data(user_key));
+
    //const data_config *cfg = txn_kvsb->tcfg->kvsb_cfg.data_cfg;
    const data_config *cfg = txn_kvsb->tcfg->txn_data_cfg.application_data_cfg;
 
@@ -740,6 +761,9 @@ _lock_based_lookup(transactional_splinterdb *txn_kvsb,
                    rw_entry                 *entry,
                    splinterdb_lookup_result *result)
 {
+   //platform_default_log("_lock_based_lookup; key = %s\n",
+   //                     (char *)slice_data(entry->key));
+
    // TODO: generate a transaction id to use as the unique lock request id
    if (lock_table_chardonnay_try_acquire_entry_lock(
       txn_kvsb->lock_tbl, entry, READ_LOCK, txn)
@@ -763,29 +787,49 @@ transactional_splinterdb_commit(transactional_splinterdb *txn_kvsb,
 
    // We assume we executed the transaction in dry-run mode
 
-   // Now we need to execute the transaction in normal 2PL mode
+   // Now we need to execute the transaction in normal 2PL mode.
+   // ATTENTION: TODO: this "re-execution" works only for YCSB transactions where
+   // the read-set and write-set are fixed and do not depend on the read values
+   // and each data item is unique.
 
    // TODO: ditch WOUND-WAIT (for YCSB read and write set does not change and operations can be executed in any order -- best case scenario for Chardonnay)
 
    // First, sort the read-set and write-set by key
-   qsort(txn->rw_entries, txn->num_rw_entries, sizeof(rw_entry), _compare);
+   //qsort(txn->rw_entries, txn->num_rw_entries, sizeof(rw_entry), _compare);
+
+   // platform_sort_slow(txn->rw_entries,
+   //                    txn->num_rw_entries,
+   //                    sizeof(rw_entry *),
+   //                    rw_entry_key_compare,
+   //                    (void *)txn_kvsb->tcfg->txn_data_cfg.application_data_cfg,
+   //                    NULL);
 
    platform_default_log("[Thread %lu] After qsort. Num entries: %ld\n",
-                        get_tid(),
-                        txn->num_rw_entries);
+                       get_tid(),
+                       txn->num_rw_entries);
 
    // Now, re-execute the transaction
    // TODO: we need to pass the value length; use hardcoded 100
+
    splinterdb_lookup_result result;
    char val[100];
    splinterdb_lookup_result_init(NULL, &result, 100, val);
    for (int i = 0; i < txn->num_rw_entries; ++i) {
       rw_entry *entry = txn->rw_entries[i];
       if (rw_entry_is_write(entry)) {
-         if (_local_write(txn_kvsb, txn, entry->key, entry->msg)) {
+         platform_default_log("Re-executing buffered write for key %s\n",
+                              (char *)slice_data(entry->key));
+
+         message m = entry->msg;
+         entry->msg = NULL_MESSAGE;
+
+         if (_local_write(txn_kvsb, txn, entry->key, m)) {
             return 1;
          }
       } else {
+         platform_default_log("Re-executing read for key %s\n",
+                              (char *)slice_data(entry->key));
+
          if (_lock_based_lookup(txn_kvsb, txn, entry, &result)) {
             return 1;
          }
@@ -800,6 +844,8 @@ transactional_splinterdb_commit(transactional_splinterdb *txn_kvsb,
    for (int i = 0; i < txn->num_rw_entries; ++i) {
       rw_entry *entry = txn->rw_entries[i];
       if (rw_entry_is_write(entry)) {
+         platform_default_log("Committing buffered write for key %s\n",
+                              (char *)slice_data(entry->key));
          slice new_key = versioned_key_create_slice(entry->key, current_epoch);
 #if EXPERIMENTAL_MODE_BYPASS_SPLINTERDB == 1
          if (0) {
@@ -846,6 +892,9 @@ int
 transactional_splinterdb_abort(transactional_splinterdb *txn_kvsb,
                                transaction              *txn)
 {
+   platform_default_log("Aborting, ts: %ld\n",
+                        (long)txn->ts);
+
    // unlock all entries that are locked so far
    for (int i = 0; i < txn->num_rw_entries; ++i) {
       rw_entry *entry = txn->rw_entries[i];
@@ -869,18 +918,13 @@ _buffer_write(transactional_splinterdb *txn_kvsb,
             slice                      user_key,
             message                    msg)
 {
-
-   platform_default_log("Buffered write, key: %s\n",
-                        (char *)slice_data(user_key));
-
    const data_config *cfg = txn_kvsb->tcfg->txn_data_cfg.application_data_cfg;
 
    // TODO: not sure why we need a copy of the user key here
-   char              *user_key_copy;
+   char *user_key_copy;
    user_key_copy = TYPED_ARRAY_ZALLOC(0, user_key_copy, slice_length(user_key));
-   rw_entry *entry = rw_entry_get(
-      txn_kvsb, txn, slice_copy_contents(user_key_copy, user_key), cfg, FALSE);
-   
+   rw_entry *entry = rw_entry_get( txn_kvsb, txn, slice_copy_contents(user_key_copy, user_key), cfg, FALSE);
+
    if (message_is_null(entry->msg)) {
       rw_entry_set_msg(entry, msg);
    } else {
@@ -903,6 +947,9 @@ _buffer_write(transactional_splinterdb *txn_kvsb,
          }
       }
    }
+
+   platform_default_log("Buffered write, key: %s\n",
+                        (char *)slice_data(entry->key));
    return 0;
 }
 
@@ -1014,9 +1061,7 @@ transactional_splinterdb_lookup(transactional_splinterdb *txn_kvsb,
    int rc = 0;
 
 #if EXPERIMENTAL_MODE_BYPASS_SPLINTERDB == 0
-   if (rw_entry_is_write(entry)) {
-      platform_assert(false, "Should not read my writes, key %s\n", (char *)slice_data(user_key));
-   
+   if (rw_entry_is_write(entry)) {   
       // read my write
       // TODO This works for simple insert/update. However, it doesn't work
       // for upsert.
