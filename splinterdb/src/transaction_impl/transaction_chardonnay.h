@@ -8,7 +8,14 @@
 #include "experimental_mode.h"
 #include "splinterdb_internal.h"
 #include "FPSketch/iceberg_table.h"
+#include "cpu_relax.h"
+
 #include "poison.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdatomic.h>
+#include <pthread.h>
 
 /*
  * Implements the epoch server that provides a global epoch counter.
@@ -91,8 +98,86 @@ void epoch_server_deinit(epoch_server_chardonnay *server) {
  * Implements a lock table that uses READ/WRITE locks and the WOUND-WAIT policy
  */
 
+// An implementation of MCS (Mellor-Crummey and Scott) Reader-Writer Locks.
+// MCS locks are scalable and fair, making them suitable for high-contention scenarios.
+
+// Node structure for MCS lock
+typedef struct mcs_node {
+    _Atomic(struct mcs_node *) next;
+    _Atomic(int) locked; // 1 if locked, 0 otherwise
+} mcs_node_t;
+
+// Reader-Writer Lock structure
+typedef struct {
+    _Atomic(mcs_node_t *) tail; // Tail pointer for MCS queue
+    _Atomic(int) readers;       // Count of active readers
+    platform_mutex writer_lock; // Mutex for writer exclusion
+} mcs_rwlock_t;
+
+// Initialize the lock
+void mcs_rwlock_init(mcs_rwlock_t *lock) {
+    atomic_store(&lock->tail, NULL);
+    atomic_store(&lock->readers, 0);
+    platform_mutex_init(&lock->writer_lock, 0, 0);
+}
+
+void mcs_rwlock_destroy(mcs_rwlock_t *lock) {
+    platform_mutex_destroy(&lock->writer_lock);
+}
+
+// Acquire read lock
+void mcs_rwlock_acquire_read(mcs_rwlock_t *lock) {
+    platform_mutex_lock(&lock->writer_lock); // Ensure no writer is active
+    atomic_fetch_add(&lock->readers, 1);    // Increment reader count
+    platform_mutex_unlock(&lock->writer_lock);
+}
+
+// Release read lock
+void mcs_rwlock_release_read(mcs_rwlock_t *lock) {
+    atomic_fetch_sub(&lock->readers, 1); // Decrement reader count
+}
+
+// Acquire write lock
+void mcs_rwlock_acquire_write(mcs_rwlock_t *lock, mcs_node_t *node) {
+    node->next = NULL;
+    node->locked = 1;
+
+    mcs_node_t *prev = atomic_exchange(&lock->tail, node);
+    if (prev) {
+        atomic_store(&prev->next, node);
+        while (atomic_load(&node->locked)) {
+            // Spin until lock is acquired
+            cpu_relax();
+        }
+    }
+
+    platform_mutex_lock(&lock->writer_lock); // Ensure no readers are active
+    while (atomic_load(&lock->readers) > 0) {
+        // Wait for all readers to finish
+        cpu_relax();
+    }
+}
+
+// Release write lock
+void mcs_rwlock_release_write(mcs_rwlock_t *lock, mcs_node_t *node) {
+    platform_mutex_unlock(&lock->writer_lock);
+
+    mcs_node_t *next = atomic_load(&node->next);
+    if (!next) {
+        mcs_node_t *expected = node;
+        if (atomic_compare_exchange_strong(&lock->tail, &expected, NULL)) {
+            return; // No successor
+        }
+        while (!(next = atomic_load(&node->next))) {
+            // Wait for successor to appear
+            cpu_relax();
+        }
+    }
+    atomic_store(&next->locked, 0); // Unlock successor
+}
+
 #define LOCK_TABLE_DEBUG   0
-#define WOUND_WAIT_TIMEOUT 10
+//#define WOUND_WAIT_TIMEOUT 10
 
 // The lock table is just a hash map
 typedef struct lock_table_chardonnay {
@@ -104,23 +189,11 @@ typedef enum lock_type {
    WRITE_LOCK     // exclusive lock
 } lock_type;
 
-typedef struct lock_req {
-   lock_type        lt;
-   transaction     *txn;  // access to transaction ts as well
-   struct lock_req *next; // to form a linked list
-} lock_req;
-
-// Each lock_entry in this lock table contains some certain state required to
-// implement the chosen locking policy
-typedef struct lock_entry {
-   lock_req *owners;
-   platform_condvar condvar;
-} lock_entry;
-
 typedef struct rw_entry {
-   slice       key;
-   message     msg; // value + op
-   lock_entry *le;
+   slice        key;
+   message      msg; // value + op
+   mcs_rwlock_t *le;
+   mcs_node_t   mcs_node; // for writer lock only
 } rw_entry;
 
 typedef enum lock_table_chardonnay_rc {
@@ -156,162 +229,43 @@ get_tid()
    return platform_get_tid();
 }
 
-static inline lock_req *
-get_lock_req(lock_type lt, transaction *txn)
-{
-   lock_req *lreq;
-   lreq       = TYPED_ZALLOC(0, lreq);
-   lreq->next = NULL;
-   lreq->lt   = lt;
-   lreq->txn  = txn;
-   return lreq;
-}
-
-lock_entry *
+mcs_rwlock_t *
 lock_entry_init()
 {
-   lock_entry *le;
-   le = TYPED_ZALLOC(0, le);
-   platform_condvar_init(&le->condvar, 0);
-   return le;
+   mcs_rwlock_t *mcs_lock = TYPED_ZALLOC(0, mcs_lock);
+   mcs_rwlock_init(mcs_lock);
+   return mcs_lock;
 }
 
 void
-lock_entry_destroy(lock_entry *le)
+lock_entry_destroy(mcs_rwlock_t *mcs_lock)
 {
-   platform_condvar_destroy(&le->condvar);
-   platform_free(0, le);
+   mcs_rwlock_destroy(mcs_lock);
+   platform_free(0, mcs_lock);
 }
 
 lock_table_chardonnay_rc
-_lock(lock_entry *le, lock_type lt, transaction *txn)
+_lock(mcs_rwlock_t *mcs_lock, mcs_node_t *mcs_node, lock_type lt)
 {
-   platform_condvar_lock(&le->condvar);
-   while (true) {
-      if (txn->wounded) {
-         platform_condvar_unlock(&le->condvar);
-         return LOCK_TABLE_CHARDONNAY_RC_BUSY;
-      }
-
-      if (le->owners == NULL) {
-         // we need to create a new lock_req and obtain the lock
-         le->owners = get_lock_req(lt, txn);
-         platform_condvar_unlock(&le->condvar);
-         return LOCK_TABLE_CHARDONNAY_RC_OK;
-      }
-
-      lock_req *iter = le->owners;
-
-      if (iter->lt == WRITE_LOCK) {
-         platform_assert(iter->next == NULL,
-                         "More than one owners holding an exclusive lock");
-         if (iter->txn->ts != txn->ts) {
-            // another writer holding the lock
-            if (iter->txn->ts > txn->ts) {
-               // wound the exclusive owner
-               iter->txn->wounded = true;
-            }
-         } else {
-            // we already hold an exclusive lock
-            platform_condvar_unlock(&le->condvar);
-            return LOCK_TABLE_CHARDONNAY_RC_OK;
-         }
-      } else if (lt == WRITE_LOCK) {
-         if (iter->txn->ts == txn->ts && iter->next == NULL) {
-            // we can upgrade the shared lock which we are
-            // already exclusively holding
-            iter->lt = WRITE_LOCK;
-            platform_condvar_unlock(&le->condvar);
-            return LOCK_TABLE_CHARDONNAY_RC_OK;
-         } else {
-            // wound all younger readers (i.e., with ts > txn->ts)
-            while (iter && iter->txn->ts > txn->ts) {
-               // lazy wound; txn aborts on the next lock attempt
-               iter->txn->wounded = true;
-               iter               = iter->next;
-            }
-         }
-      } else if (lt == READ_LOCK) {
-         // we keep owners sorted in ts descending order
-         lock_req *prev = NULL;
-         while (iter && iter->txn->ts > txn->ts) {
-            prev = iter;
-            iter = iter->next;
-         }
-         if (iter && iter->txn->ts == txn->ts) {
-            // we already hold the lock
-            platform_condvar_unlock(&le->condvar);
-            return LOCK_TABLE_CHARDONNAY_RC_OK;
-         }
-         lock_req *lr = get_lock_req(lt, txn);
-         lr->next     = iter;
-         if (prev != NULL)
-            prev->next = lr;
-         else
-            le->owners = lr;
-         platform_condvar_unlock(&le->condvar);
-         return LOCK_TABLE_CHARDONNAY_RC_OK;
-      }
-      platform_condvar_timedwait(&le->condvar, WOUND_WAIT_TIMEOUT);
+   if (lt == WRITE_LOCK) {
+      mcs_rwlock_acquire_write(mcs_lock, mcs_node);
+   } else {
+      mcs_rwlock_acquire_read(mcs_lock);
    }
 
-   // Should not get here
-   platform_assert(false, "Dead code branch");
-   platform_condvar_unlock(&le->condvar);
    return LOCK_TABLE_CHARDONNAY_RC_OK;
 }
 
 lock_table_chardonnay_rc
-_unlock(lock_entry *le, lock_type lt, transaction *txn)
+_unlock(mcs_rwlock_t *mcs_lock,mcs_node_t *mcs_node, lock_type lt)
 {
-   platform_condvar_lock(&le->condvar);
-   lock_req *iter = le->owners;
-   lock_req *prev = NULL;
-
-   while (iter != NULL) {
-      if (iter->txn->ts == txn->ts) {
-         if (iter->lt == lt) {
-            // request is valid, release the lock
-            if (prev != NULL) {
-               prev->next = iter->next;
-            } else {
-               le->owners = iter->next;
-            }
-            platform_free(0, iter);
-            platform_condvar_broadcast(&le->condvar);
-            platform_condvar_unlock(&le->condvar);
-            return LOCK_TABLE_CHARDONNAY_RC_OK;
-         } else {
-            platform_condvar_unlock(&le->condvar);
-            return LOCK_TABLE_CHARDONNAY_RC_INVALID;
-         }
-      }
-      prev = iter;
-      iter = iter->next;
+   if (lt == WRITE_LOCK) {
+      mcs_rwlock_release_write(mcs_lock, mcs_node);
+   } else {
+      mcs_rwlock_release_read(mcs_lock);
    }
 
-   platform_condvar_unlock(&le->condvar);
-   return LOCK_TABLE_CHARDONNAY_RC_NODATA;
-}
-
-static void
-_wait_for_current_writers(lock_entry *le)
-{
-   if (le == NULL)
-      return;
-
-   // wait until all writing transactions that might commit before txn->epoch
-   // finish. These transactions are waiting to acquire exclusive locks.
-   // TODO: implement with multiple write waiters
-   platform_condvar_lock(&le->condvar);
-   if (le->owners != NULL) {
-      if (le->owners->lt == WRITE_LOCK) {
-         platform_assert(le->owners->next == NULL,
-                         "More than one owners holding an exclusive lock");
-         platform_condvar_wait(&le->condvar);
-      }
-   }
-   platform_condvar_unlock(&le->condvar);
+   return LOCK_TABLE_CHARDONNAY_RC_OK;
 }
 
 lock_table_chardonnay_rc
@@ -320,13 +274,14 @@ lock_table_chardonnay_try_acquire_entry_lock(lock_table_chardonnay *lock_tbl,
                                       lock_type       lt,
                                       transaction    *txn)
 {
-   //platform_default_log("Try to acquire %s lock on key %s\n",
-   //                     (lt == READ_LOCK) ? "READ" : "WRITE",
-   //                     (char *)slice_data(entry->key));
+   platform_assert(entry != NULL,
+                   "[Thread %lu] Trying to acquire a lock using NULL entry; for key %s\n",
+                   get_tid(),
+                   (char *)slice_data(entry->key));
 
    if (entry->le) {
       // we already have a pointer to the lock status
-      return _lock(entry->le, lt, txn);
+      return _lock(entry->le, &entry->mcs_node, lt);
    }
 
    // else we either get a pointer to an existing lock status
@@ -335,19 +290,22 @@ lock_table_chardonnay_try_acquire_entry_lock(lock_table_chardonnay *lock_tbl,
 
    ValueType  value_to_be_inserted     = (ValueType)entry->le;
    ValueType *pointer_of_iceberg_value = &value_to_be_inserted;
+   // Iceberg will modify the data pointer in key_copy and manage it itself;
+   // we do not need that pointer anywhere else.
+   slice key_copy = entry->key;
    bool       is_newly_inserted =
       iceberg_insert_and_get(&lock_tbl->table,
-                             &entry->key,
+                             &key_copy,
                              (ValueType **)&pointer_of_iceberg_value,
                              get_tid());
    if (!is_newly_inserted) {
       // there's already a lock_entry for this key in the lock_table
       lock_entry_destroy(entry->le);
-      entry->le = (lock_entry *)*pointer_of_iceberg_value;
+      entry->le = (mcs_rwlock_t *)*pointer_of_iceberg_value;
    }
 
    // get the latch then update the lock status
-   return _lock(entry->le, lt, txn);
+   return _lock(entry->le, &entry->mcs_node, lt);
 }
 
 lock_table_chardonnay_rc
@@ -356,13 +314,17 @@ lock_table_chardonnay_release_entry_lock(lock_table_chardonnay *lock_tbl,
                                          lock_type       lt,
                                          transaction    *txn)
 {
-   platform_assert(entry->le != NULL,
-                   "Trying to release a lock using NULL lock entry; for key %s\n",
+   platform_assert(entry != NULL,
+                   "[Thread %lu] Trying to release a lock using NULL entry; for key %s\n",
+                   get_tid(),
                    (char *)slice_data(entry->key));
 
-   if (_unlock(entry->le, lt, txn) == LOCK_TABLE_CHARDONNAY_RC_OK) {
-      // platform_assert(iceberg_force_remove(&lock_tbl->table, key,
-      // get_tid()));
+   platform_assert(entry->le != NULL,
+                   "[Thread %lu] Trying to release a lock using NULL lock entry; for key %s\n",
+                   get_tid(),
+                   (char *)slice_data(entry->key));
+
+   if (_unlock(entry->le, &entry->mcs_node, lt) == LOCK_TABLE_CHARDONNAY_RC_OK) {
       if (iceberg_remove(&lock_tbl->table, entry->key, get_tid())) {
          lock_entry_destroy(entry->le);
          entry->le = NULL;
@@ -378,10 +340,9 @@ lock_table_chardonnay_release_entry_lock(lock_table_chardonnay *lock_tbl,
    return LOCK_TABLE_CHARDONNAY_RC_OK;
 }
 
-
 /*
  * Implementation of Chardonnay (lock-free read-only transactions, dry-run, 2PL). It uses a lock_table that
- * implements the WOUND-WAIT deadlock prevention mechanism.
+ * uses an MCS read-write lock (no deadlock for this workload).
  */
 
 txn_timestamp global_ts = 0;
@@ -401,9 +362,16 @@ rw_entry_create()
    return new_entry;
 }
 
+static inline bool
+rw_entry_is_write(const rw_entry *entry)
+{
+   return !message_is_null(entry->msg);
+}
+
 static inline void
 rw_entry_deinit(rw_entry *entry)
 {
+
    if (!slice_is_null(entry->key)) {
       void *ptr = (void *)slice_data(entry->key);
       platform_free(0, ptr);
@@ -428,12 +396,6 @@ rw_entry_set_msg(rw_entry *e, message msg)
    memcpy(msg_buf, message_data(msg), message_length(msg));
    e->msg = message_create(message_class(msg),
                            slice_create(message_length(msg), msg_buf));
-}
-
-static inline bool
-rw_entry_is_write(const rw_entry *entry)
-{
-   return !message_is_null(entry->msg);
 }
 
 static inline rw_entry *
@@ -464,19 +426,19 @@ rw_entry_get(transactional_splinterdb *txn_kvsb,
    return entry;
 }
 
-// static int
-// rw_entry_key_compare(const void *elem1, const void *elem2, void *args)
-// {
-//    const data_config *cfg = (const data_config *)args;
+static int
+rw_entry_key_compare(const void *elem1, const void *elem2, void *args)
+{
+   const data_config *cfg = (const data_config *)args;
 
-//    rw_entry *e1 = *((rw_entry **)elem1);
-//    rw_entry *e2 = *((rw_entry **)elem2);
+   rw_entry *e1 = *((rw_entry **)elem1);
+   rw_entry *e2 = *((rw_entry **)elem2);
 
-//    key akey = key_create_from_slice(e1->key);
-//    key bkey = key_create_from_slice(e2->key);
+   key akey = key_create_from_slice(e1->key);
+   key bkey = key_create_from_slice(e2->key);
 
-//    return data_key_compare(cfg, akey, bkey);
-// }
+   return data_key_compare(cfg, akey, bkey);
+}
 
 /* Implement the transactional interface */
 
@@ -695,20 +657,12 @@ transaction_deinit(transactional_splinterdb *txn_kvsb, transaction *txn)
    }
 }
 
-//int _compare(const void *a, const void *b) {
-//   return slice_lex_cmp((*(rw_entry*)a).key, (*(rw_entry*)b).key);
-//}
-
 static int
 _local_write(transactional_splinterdb *txn_kvsb,
             transaction               *txn,
             slice                     user_key,
             message                   msg)
 {
-   platform_default_log("_local_write; key = %s\n",
-                        (char *)slice_data(user_key));
-
-   //const data_config *cfg = txn_kvsb->tcfg->kvsb_cfg.data_cfg;
    const data_config *cfg = txn_kvsb->tcfg->txn_data_cfg.application_data_cfg;
 
    rw_entry *entry = rw_entry_get(
@@ -761,10 +715,6 @@ _lock_based_lookup(transactional_splinterdb *txn_kvsb,
                    rw_entry                 *entry,
                    splinterdb_lookup_result *result)
 {
-   //platform_default_log("_lock_based_lookup; key = %s\n",
-   //                     (char *)slice_data(entry->key));
-
-   // TODO: generate a transaction id to use as the unique lock request id
    if (lock_table_chardonnay_try_acquire_entry_lock(
       txn_kvsb->lock_tbl, entry, READ_LOCK, txn)
       == LOCK_TABLE_CHARDONNAY_RC_BUSY)
@@ -780,11 +730,6 @@ int
 transactional_splinterdb_commit(transactional_splinterdb *txn_kvsb,
                                 transaction              *txn)
 {
-
-   platform_default_log("[Thread %lu] Trying to commit, ts: %ld\n",
-                        get_tid(),
-                        (long)txn->ts);
-
    // We assume we executed the transaction in dry-run mode
 
    // Now we need to execute the transaction in normal 2PL mode.
@@ -792,21 +737,16 @@ transactional_splinterdb_commit(transactional_splinterdb *txn_kvsb,
    // the read-set and write-set are fixed and do not depend on the read values
    // and each data item is unique.
 
-   // TODO: ditch WOUND-WAIT (for YCSB read and write set does not change and operations can be executed in any order -- best case scenario for Chardonnay)
+   // TODO: For now for this workload it is sufficient to take locks
+   // in order, no deadlock will happen.
 
    // First, sort the read-set and write-set by key
-   //qsort(txn->rw_entries, txn->num_rw_entries, sizeof(rw_entry), _compare);
-
-   // platform_sort_slow(txn->rw_entries,
-   //                    txn->num_rw_entries,
-   //                    sizeof(rw_entry *),
-   //                    rw_entry_key_compare,
-   //                    (void *)txn_kvsb->tcfg->txn_data_cfg.application_data_cfg,
-   //                    NULL);
-
-   platform_default_log("[Thread %lu] After qsort. Num entries: %ld\n",
-                       get_tid(),
-                       txn->num_rw_entries);
+   platform_sort_slow(txn->rw_entries,
+                      txn->num_rw_entries,
+                      sizeof(rw_entry *),
+                      rw_entry_key_compare,
+                      (void *)txn_kvsb->tcfg->txn_data_cfg.application_data_cfg,
+                      NULL);
 
    // Now, re-execute the transaction
    // TODO: we need to pass the value length; use hardcoded 100
@@ -816,10 +756,8 @@ transactional_splinterdb_commit(transactional_splinterdb *txn_kvsb,
    splinterdb_lookup_result_init(NULL, &result, 100, val);
    for (int i = 0; i < txn->num_rw_entries; ++i) {
       rw_entry *entry = txn->rw_entries[i];
-      if (rw_entry_is_write(entry)) {
-         platform_default_log("Re-executing buffered write for key %s\n",
-                              (char *)slice_data(entry->key));
 
+      if (rw_entry_is_write(entry)) {
          message m = entry->msg;
          entry->msg = NULL_MESSAGE;
 
@@ -827,8 +765,7 @@ transactional_splinterdb_commit(transactional_splinterdb *txn_kvsb,
             return 1;
          }
       } else {
-         platform_default_log("Re-executing read for key %s\n",
-                              (char *)slice_data(entry->key));
+         entry->le = NULL; // reset the lock entry pointer
 
          if (_lock_based_lookup(txn_kvsb, txn, entry, &result)) {
             return 1;
@@ -844,8 +781,6 @@ transactional_splinterdb_commit(transactional_splinterdb *txn_kvsb,
    for (int i = 0; i < txn->num_rw_entries; ++i) {
       rw_entry *entry = txn->rw_entries[i];
       if (rw_entry_is_write(entry)) {
-         platform_default_log("Committing buffered write for key %s\n",
-                              (char *)slice_data(entry->key));
          slice new_key = versioned_key_create_slice(entry->key, current_epoch);
 #if EXPERIMENTAL_MODE_BYPASS_SPLINTERDB == 1
          if (0) {
@@ -881,7 +816,7 @@ transactional_splinterdb_commit(transactional_splinterdb *txn_kvsb,
          lock_table_chardonnay_release_entry_lock(
             txn_kvsb->lock_tbl, entry, READ_LOCK, txn);
       }
-   }
+  }
 
    transaction_deinit(txn_kvsb, txn);
 
@@ -892,7 +827,10 @@ int
 transactional_splinterdb_abort(transactional_splinterdb *txn_kvsb,
                                transaction              *txn)
 {
-   platform_default_log("Aborting, ts: %ld\n",
+   platform_assert(false, "Should not abort in Chardonnay\n");
+
+   platform_default_log("[Thread %lu] Aborting, ts: %ld\n",
+                        get_tid(),
                         (long)txn->ts);
 
    // unlock all entries that are locked so far
@@ -920,7 +858,6 @@ _buffer_write(transactional_splinterdb *txn_kvsb,
 {
    const data_config *cfg = txn_kvsb->tcfg->txn_data_cfg.application_data_cfg;
 
-   // TODO: not sure why we need a copy of the user key here
    char *user_key_copy;
    user_key_copy = TYPED_ARRAY_ZALLOC(0, user_key_copy, slice_length(user_key));
    rw_entry *entry = rw_entry_get( txn_kvsb, txn, slice_copy_contents(user_key_copy, user_key), cfg, FALSE);
@@ -947,9 +884,6 @@ _buffer_write(transactional_splinterdb *txn_kvsb,
          }
       }
    }
-
-   platform_default_log("Buffered write, key: %s\n",
-                        (char *)slice_data(entry->key));
    return 0;
 }
 
@@ -1003,6 +937,15 @@ transactional_splinterdb_update(transactional_splinterdb *txn_kvsb,
    return _buffer_write(txn_kvsb, txn, user_key, message_create(msg_type, delta));
 }
 
+static void
+_wait_for_current_writers(lock_table_chardonnay *lock_tbl, rw_entry *entry, transaction *txn)
+{
+   // wait until all writing transactions that might commit before txn->epoch
+   // finish. These transactions are waiting to acquire exclusive locks.
+   lock_table_chardonnay_try_acquire_entry_lock(lock_tbl, entry, READ_LOCK, txn);
+   lock_table_chardonnay_release_entry_lock(lock_tbl, entry, READ_LOCK, txn);
+}
+
 static int
 _lock_free_lookup(transactional_splinterdb *txn_kvsb,
                   transaction              *txn,
@@ -1011,25 +954,16 @@ _lock_free_lookup(transactional_splinterdb *txn_kvsb,
 {
    int rc = 0;
 
-   platform_default_log("Lock free lookup, nr ops: %lu, key: %s\n", txn->num_rw_entries, (char *)slice_data(entry->key));
-
    // First wait until all writing transactions that might commit before txn->epoch
    // finish. These transactions are waiting to acquire exclusive locks.
-   _wait_for_current_writers(entry->le);
+   _wait_for_current_writers(txn_kvsb->lock_tbl, entry, txn);
 
    // Then read the latest value as of epoch
 
-   //TODO: insert epoch 0
    uint32 epoch = txn->epoch - 1;
    while (true) {
       slice spl_key =
          versioned_key_create_slice(entry->key, epoch);
-
-      // platform_default_log("[Thread %lu] Trying to read epoch: %d, key_length: %lu, key: %s\n",
-      //                   get_tid(),
-      //                   epoch,
-      //                   slice_length(spl_key),
-      //                   (char *)slice_data(spl_key));
 
       rc = splinterdb_lookup(txn_kvsb->kvsb, spl_key, result);
       platform_assert(rc == 0);
